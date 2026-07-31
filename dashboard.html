@@ -1,0 +1,134 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Teacher Dashboard</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<div id="runnerTop" class="runner"></div>
+
+<div class="wrap">
+
+  <div class="sitehead">
+    <span id="siteIcon" class="siteicon">icon</span>
+    <span id="siteTitle" class="sitetitle">EssayEspresso</span>
+    <span style="flex:1;"></span>
+    <button id="apperanceBtn">⚙ Appearance</button>
+  </div>
+  <p class="muted">Teacher Dashboard · <span id="whoName">Jim</span> · <span id="whoEmail"></span> · <a href="#" id="logoutLink">Log out</a></p>
+
+  <div class="tabs" id="tabs">
+    <div class="tab active" data-panel="students">Students</div>
+    <div class="tab" data-panel="worksheets">Worksheets</div>
+    <div class="tab" data-panel="assign">Assign</div>
+    <div class="tab" data-panel="answers">Answers</div>
+    <div class="tab" data-panel="boxes">Student Boxes</div>
+    <div class="tab" data-panel="mine">My Profile</div>
+  </div>
+
+  <!-- ================= STUDENTS ================= -->
+  <div class="panel active" id="students">
+    <h2>Waiting for approval</h2>
+    <div id="pendingList"><p class="muted">Loading…</p></div>
+    <h2 style="margin-top:24px;">Approved students</h2>
+    <div id="approvedList"><p class="muted">Loading…</p></div>
+  </div>
+
+  <!-- ================= WORKSHEETS ================= -->
+  <div class="panel" id="worksheets">
+    <h2>Worksheets <span class="muted">(master list — students only see assigned ones)</span></h2>
+    <div style="display:flex; gap:8px; margin-bottom:16px; flex-wrap:wrap;">
+      <input id="newWsTitle" type="text" placeholder="New worksheet title…" style="flex:1; min-width:180px;">
+      <button class="primary" id="createWsBtn">+ Create</button>
+      <button id="importWsBtn">⬆ Import</button>
+      <button id="exportWsBtn">⬇ Export all</button>
+    </div>
+    <input id="importWsFile" type="file" accept="application/json" class="hidden">
+    <div id="wsList"><p class="muted">Loading…</p></div>
+  </div>
+
+  <!-- ================= ASSIGN ================= -->
+  <div class="panel" id="assign">
+    <h2>Assign worksheets</h2>
+    <p class="muted">Pick a student, add whole worksheets, set their order with ▲▼.</p>
+    <select id="assignStudent" style="width:100%; max-width:420px; margin-bottom:14px;"></select>
+    <div id="assignArea"><p class="muted">Pick a student above.</p></div>
+  </div>
+
+  <!-- ================= ANSWERS ================= -->
+  <div class="panel" id="answers">
+    <h2>Student answers</h2>
+    <div style="display:flex; gap:8px; margin-bottom:16px; flex-wrap:wrap;">
+      <select id="ansWsFilter" style="flex:1; min-width:160px;"><option value="">All worksheets</option></select>
+      <select id="ansStuFilter" style="flex:1; min-width:160px;"><option value="">All students</option></select>
+      <button id="ansRefresh">Refresh</button>
+    </div>
+    <div id="answersList"><p class="muted">Choose filters and Refresh.</p></div>
+  </div>
+
+  <!-- ================= STUDENT BOXES ================= -->
+  <div class="panel" id="boxes">
+    <h2>Custom boxes on student dashboards</h2>
+    <div style="display:flex; gap:8px; margin-bottom:16px; flex-wrap:wrap;">
+      <input id="newBoxTitle" type="text" placeholder="New box title…" style="flex:1; min-width:180px;">
+      <button class="primary" id="createBoxBtn">+ Create box</button>
+    </div>
+    <div id="boxesList"><p class="muted">Loading…</p></div>
+  </div>
+
+  <!-- ================= MY PROFILE ================= -->
+  <div class="panel" id="mine">
+    <h2>My profile</h2>
+    <p class="muted">Display name</p><input id="pName" type="text">
+    <p class="muted">Profile picture — paste URL or upload (auto-shrunk)</p>
+    <input id="pPhoto" type="url" placeholder="https://…">
+    <button id="pPhotoUpload" style="margin-top:6px;">Choose file…</button>
+    <input id="pPhotoFile" type="file" accept="image/*" class="hidden">
+
+    <h2 style="margin-top:22px;">My status stamps <span class="muted">(set once, reused everywhere)</span></h2>
+    <p><span class="good">Good job ✓</span> image:
+      <button id="goodUpload">Choose file…</button> or <input id="goodUrl" type="url" placeholder="image URL" style="width:200px;"></p>
+    <p><span class="ng">Try again ✗</span> image:
+      <button id="ngUpload">Choose file…</button> or <input id="ngUrl" type="url" placeholder="image URL" style="width:200px;"></p>
+    <input id="goodFile" type="file" accept="image/*" class="hidden">
+    <input id="ngFile" type="file" accept="image/*" class="hidden">
+
+    <h2 style="margin-top:22px;">Backup — export everything</h2>
+    <div class="card fill">
+      <button class="primary" id="exportAllBtn">⬇ Export ALL data (backup)</button>
+      <p class="muted" style="margin:8px 0 0;">Downloads one file with every worksheet, all students' answers &amp; attempts, comments, status marks, assignments, and boxes. Your own separate copy — do this now and then.</p>
+    </div>
+
+    <div style="margin-top:14px;"><button class="primary" id="saveProfileBtn">Save profile</button> <span id="profileSaved" class="muted"></span></div>
+  </div>
+
+</div>
+
+<div id="runnerBottom" class="runner" style="margin-top:30px;"></div>
+
+<!-- appearance modal -->
+<div id="appearancePanel" class="wrap hidden" style="max-width:520px;">
+  <div class="card fill">
+    <h2 style="margin-top:0;">Appearance</h2>
+    <p class="muted">Background colour:</p>
+    <div id="apSwatches" style="margin-bottom:8px;"></div>
+    <p class="muted">…or paste an image URL (shown faded):</p>
+    <input id="apBg" type="text" placeholder="#eef6ef or https://image…">
+    <div style="margin-top:12px;">
+      <button class="primary" id="apSave">Save</button>
+      <button id="apCancel">Cancel</button>
+    </div>
+  </div>
+</div>
+
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-auth-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore-compat.js"></script>
+<script src="config.js"></script>
+<script src="shared-ui.js"></script>
+<script src="dashboard.js"></script>
+</body>
+</html>

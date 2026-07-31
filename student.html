@@ -1,0 +1,92 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>My worksheets</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<div id="runnerTop" class="runner"></div>
+
+<!-- teacher-only bar shown when previewing / viewing-as -->
+<div id="viewBar" class="teacherbar hidden"></div>
+
+<div class="wrap" style="max-width:680px;">
+
+  <div id="loading" class="spinner">Loading…</div>
+
+  <!-- PENDING screen -->
+  <div id="pendingScreen" class="hidden">
+    <div class="sitehead"><span id="siteIcon" class="siteicon">icon</span><span id="siteTitle" class="sitetitle">EssayEspresso</span></div>
+    <div class="card" style="margin-top:20px;">
+      <h2 style="margin-top:0;">Thanks for signing in!</h2>
+      <p>Your tutor hasn't approved your account yet. Check back shortly, or message your tutor.</p>
+      <p class="muted" id="pendingEmail"></p>
+      <button id="pendingLogout">Log out</button>
+    </div>
+  </div>
+
+  <!-- APPROVED dashboard -->
+  <div id="app" class="hidden">
+    <div class="sitehead"><span id="siteIcon2" class="siteicon">icon</span><span id="siteTitle2" class="sitetitle">EssayEspresso</span></div>
+
+    <div class="row" style="margin:10px 0 20px;">
+      <div class="left" style="display:flex; align-items:center; gap:10px;">
+        <span id="myAvatar" class="avatar"></span>
+        <div><strong id="myName">Student</strong><br><span class="muted" id="myEmail"></span></div>
+      </div>
+      <button id="appearanceBtn">⚙ Appearance</button>
+      <button id="editProfileBtn">Edit profile</button>
+      <button id="logoutBtn">Log out</button>
+    </div>
+
+    <!-- edit profile panel -->
+    <div id="profilePanel" class="card fill hidden">
+      <h2 style="margin-top:0;">Edit profile</h2>
+      <p class="muted">Your name</p><input id="epName" type="text">
+      <p class="muted">Picture — paste URL or upload (auto-shrunk)</p>
+      <input id="epPhoto" type="url" placeholder="https://…">
+      <button id="epUpload" style="margin-top:6px;">Choose file…</button>
+      <input id="epFile" type="file" accept="image/*" class="hidden">
+      <div style="margin-top:12px;"><button class="primary" id="epSave">Save</button> <button id="epCancel">Cancel</button></div>
+    </div>
+
+    <!-- appearance panel -->
+    <div id="appearancePanel" class="card fill hidden">
+      <h2 style="margin-top:0;">Appearance</h2>
+      <p class="muted">Background colour:</p>
+      <div id="apSwatches" style="margin-bottom:8px;"></div>
+      <p class="muted">…or paste an image URL (shown faded):</p>
+      <input id="apBg" type="text" placeholder="#eef6ef or https://image…">
+      <div style="margin-top:12px;"><button class="primary" id="apSave">Save</button> <button id="apCancel">Cancel</button></div>
+    </div>
+
+    <!-- custom boxes render here -->
+    <div id="boxesArea"></div>
+
+    <!-- assigned worksheets -->
+    <div class="card">
+      <h2 style="margin-top:0;" id="assignedHeading">Your assigned work</h2>
+      <div id="assignedList"><p class="muted">Loading…</p></div>
+    </div>
+
+    <!-- opened worksheet renders here -->
+    <div id="openWorksheet"></div>
+
+    <div class="card"><button id="exportMineBtn">⬇ Export my answers</button></div>
+  </div>
+
+</div>
+
+<div id="runnerBottom" class="runner" style="margin-top:30px;"></div>
+
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-auth-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore-compat.js"></script>
+<script src="config.js"></script>
+<script src="shared-ui.js"></script>
+<script src="student.js"></script>
+</body>
+</html>

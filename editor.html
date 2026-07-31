@@ -1,0 +1,63 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Edit worksheet</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<div id="runnerTop" class="runner"></div>
+
+<div class="wrap" style="max-width:820px;">
+
+  <p style="margin-top:14px;"><a href="dashboard.html">← Back to dashboard</a></p>
+  <h1 id="pageTitle">Edit worksheet</h1>
+  <div id="loading" class="spinner">Loading…</div>
+
+  <div id="editArea" class="hidden">
+    <div style="margin-bottom:14px;">
+      <p class="muted">Worksheet title</p>
+      <input id="wsTitle" type="text">
+    </div>
+    <div style="margin-bottom:14px;">
+      <p class="muted">Slideshow link (optional)</p>
+      <input id="wsSlideshow" type="url" placeholder="Paste a Google Slides / any link, or leave blank">
+    </div>
+    <div style="margin-bottom:14px;">
+      <p class="muted">Instructions shown to student (optional)</p>
+      <textarea id="wsInstructions" style="min-height:50px;"></textarea>
+    </div>
+    <div class="card fill" style="margin-bottom:16px;">
+      <label><input type="checkbox" id="wsAllowPhotos"> Let students attach a photo of their work on this worksheet</label>
+      <p class="muted" style="margin:4px 0 0;">(uncheck for e.g. a multiple-choice sheet with no paper copy)</p>
+    </div>
+
+    <h2>Questions</h2>
+    <div id="questions"></div>
+
+    <div style="border:2px dashed #000; padding:12px; text-align:center; margin-bottom:16px;">
+      <button class="primary" id="addQBtn">+ Add question</button>
+    </div>
+
+    <div style="display:flex; gap:8px; flex-wrap:wrap;">
+      <button class="primary" id="saveBtn">Save worksheet</button>
+      <button id="cancelBtn">Back to dashboard</button>
+      <button id="previewBtn">Preview as student</button>
+      <span id="savedMsg" class="muted"></span>
+    </div>
+  </div>
+
+</div>
+
+<div id="runnerBottom" class="runner" style="margin-top:30px;"></div>
+
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-auth-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore-compat.js"></script>
+<script src="config.js"></script>
+<script src="shared-ui.js"></script>
+<script src="editor.js"></script>
+</body>
+</html>

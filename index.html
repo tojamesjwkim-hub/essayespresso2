@@ -1,0 +1,171 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Sign in</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<div id="runnerTop" class="runner"></div>
+
+<!-- teacher-only edit bar (hidden for students / logged out) -->
+<div id="teacherBar" class="teacherbar hidden">
+  You're signed in as teacher. <a href="dashboard.html" style="color:#fff;">Go to your dashboard →</a>
+  · <button id="editHomeBtn" style="font-size:0.8rem;padding:2px 8px;">Edit this page</button>
+</div>
+
+<div class="wrap" style="max-width:620px;">
+
+  <div class="sitehead" style="justify-content:center; margin-top:36px;">
+    <span id="siteIcon" class="siteicon">icon</span>
+    <span id="siteTitle" class="sitetitle">EssayEspresso</span>
+  </div>
+  <p id="tagline" class="muted" style="text-align:center;">A tutoring worksheet space</p>
+
+  <div class="card" style="text-align:center; margin-top:20px;">
+    <p id="signinPrompt">Sign in with the Google account your tutor approved.</p>
+    <button class="primary" id="signinBtn" style="font-size:1rem; padding:10px 18px;">Sign in with Google</button>
+    <div id="err" class="card hidden" style="margin-top:14px; text-align:left;"></div>
+    <p id="newNote" class="muted" style="margin-top:16px;">New here? Sign in and your tutor will approve you shortly.</p>
+  </div>
+
+</div>
+
+<div id="runnerBottom" class="runner" style="margin-top:30px;"></div>
+
+<!-- teacher edit panel (hidden until "Edit this page") -->
+<div id="editPanel" class="wrap hidden" style="max-width:620px;">
+  <div class="card fill">
+    <h2 style="margin-top:0;">Edit home page</h2>
+    <p class="muted">Site title</p><input id="fTitle" type="text">
+    <p class="muted">Tagline</p><input id="fTagline" type="text">
+    <p class="muted">Sign-in prompt</p><input id="fPrompt" type="text">
+    <p class="muted">"New here" note</p><input id="fNewNote" type="text">
+    <p class="muted">Runner text (top &amp; bottom banner)</p><input id="fRunner" type="text">
+    <p class="muted">Site icon image URL (optional)</p><input id="fIcon" type="url">
+    <p class="muted">Background: pastel or image URL</p>
+    <div id="swatches" style="margin:4px 0;"></div>
+    <input id="fBg" type="text" placeholder="#eef6ef or https://image…">
+    <div style="margin-top:12px;">
+      <button class="primary" id="saveHomeBtn">Save</button>
+      <button id="cancelHomeBtn">Cancel</button>
+    </div>
+  </div>
+</div>
+
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-auth-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore-compat.js"></script>
+<script src="config.js"></script>
+<script>
+// ---- site settings live in: site/config (one shared doc) ----
+var siteRef = db.collection("site").doc("config");
+var PASTELS = ["#eef6ef","#fdf0f5","#eef3fb","#fbf6e9","#f3eefb","#ffffff"];
+
+var DEFAULTS = {
+  title: "EssayEspresso",
+  tagline: "A tutoring worksheet space",
+  prompt: "Sign in with the Google account your tutor approved.",
+  newNote: "New here? Sign in and your tutor will approve you shortly.",
+  runner: "This is a version of EssayEspresso used by Jim the Tutor · Questions? tojamesjwkim@gmail.com",
+  icon: "",
+  bg: ""
+};
+
+function applyBackground(bg) {
+  if (!bg) return;
+  if (bg.charAt(0) === "#") {
+    document.body.style.background = bg;
+  } else {
+    document.body.style.setProperty("--bgimage", "url('" + bg + "')");
+    document.body.classList.add("has-bgimage");
+  }
+}
+
+function renderSite(s) {
+  $("siteTitle").textContent = s.title || DEFAULTS.title;
+  $("tagline").textContent = s.tagline || DEFAULTS.tagline;
+  $("signinPrompt").textContent = s.prompt || DEFAULTS.prompt;
+  $("newNote").textContent = s.newNote || DEFAULTS.newNote;
+  var r = s.runner || DEFAULTS.runner;
+  $("runnerTop").textContent = r;
+  $("runnerBottom").textContent = r;
+  if (s.icon) { $("siteIcon").innerHTML = '<img src="' + s.icon + '" alt="">'; }
+  applyBackground(s.bg);
+}
+
+var currentSite = Object.assign({}, DEFAULTS);
+siteRef.get().then(function (snap) {
+  if (snap.exists) currentSite = Object.assign({}, DEFAULTS, snap.data());
+  renderSite(currentSite);
+}).catch(function () { renderSite(currentSite); });
+
+// ---- sign in ----
+$("signinBtn").onclick = function () {
+  $("err").classList.add("hidden");
+  loginWithGoogle().then(function (res) {
+    routeUser(res.user);
+  }).catch(function (e) {
+    $("err").textContent = "Sign-in failed: " + e.message;
+    $("err").classList.remove("hidden");
+  });
+};
+
+function routeUser(user) {
+  if (isTeacher(user)) { window.location.href = "dashboard.html"; return; }
+  ensureStudentDoc(user).then(function () { window.location.href = "student.html"; });
+}
+
+// already signed in? show teacher bar or bounce students onward
+auth.onAuthStateChanged(function (user) {
+  if (!user) { $("teacherBar").classList.add("hidden"); return; }
+  if (isTeacher(user)) {
+    $("teacherBar").classList.remove("hidden");
+  } else {
+    window.location.href = "student.html";
+  }
+});
+
+// ---- teacher inline editing of the home page ----
+$("editHomeBtn") && ($("editHomeBtn").onclick = function () {
+  $("fTitle").value = currentSite.title || "";
+  $("fTagline").value = currentSite.tagline || "";
+  $("fPrompt").value = currentSite.prompt || "";
+  $("fNewNote").value = currentSite.newNote || "";
+  $("fRunner").value = currentSite.runner || "";
+  $("fIcon").value = currentSite.icon || "";
+  $("fBg").value = currentSite.bg || "";
+  var sw = $("swatches"); sw.innerHTML = "";
+  PASTELS.forEach(function (c) {
+    var b = document.createElement("button");
+    b.style.cssText = "width:26px;height:26px;padding:0;margin-right:4px;background:"+c;
+    b.onclick = function () { $("fBg").value = c; };
+    sw.appendChild(b);
+  });
+  $("editPanel").classList.remove("hidden");
+  $("editPanel").scrollIntoView({ behavior: "smooth" });
+});
+
+$("cancelHomeBtn").onclick = function () { $("editPanel").classList.add("hidden"); };
+
+$("saveHomeBtn").onclick = function () {
+  var s = {
+    title: $("fTitle").value.trim(),
+    tagline: $("fTagline").value.trim(),
+    prompt: $("fPrompt").value.trim(),
+    newNote: $("fNewNote").value.trim(),
+    runner: $("fRunner").value.trim(),
+    icon: $("fIcon").value.trim(),
+    bg: $("fBg").value.trim(),
+  };
+  siteRef.set(s, { merge: true }).then(function () {
+    currentSite = Object.assign({}, DEFAULTS, s);
+    renderSite(currentSite);
+    $("editPanel").classList.add("hidden");
+  });
+};
+</script>
+</body>
+</html>
