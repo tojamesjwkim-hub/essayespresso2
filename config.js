@@ -5,7 +5,7 @@
 
 // ---- EDIT: paste your Firebase web config (SETUP.md step 2) ----
 const FIREBASE_CONFIG = {
-  apiKey: "AIzaSyBmzSb3E2Hw1C0J3VnYcqRYRcHZkv0vGQoE",
+  apiKey: "AIzaSyBmzSb3E2Hw1C0J3VnYcqRYRcHZkv0vGQo",
   authDomain: "essay-espresso.firebaseapp.com",
   projectId: "essay-espresso",
 };
