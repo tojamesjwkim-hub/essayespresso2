@@ -1,20 +1,20 @@
 // ============================================================
-//  config.js — shared setup used by every page.
-//  EDIT ONLY THE MARKED SECTION. Everything else is machinery.
+//  config.js — shared setup for every page.
+//  EDIT ONLY THE MARKED SECTION.
 // ============================================================
 
-// ---- EDIT THIS: paste your Firebase web config (SETUP.md step 2) ----
+// ---- EDIT: paste your Firebase web config (SETUP.md step 2) ----
 const FIREBASE_CONFIG = {
-  apiKey: "AIzaSyBmzSb3E2Hw1C0J3VnYcqRYRcHZkv0vGQo",
+  apiKey: "AIzaSyBmzSb3E2Hw1C0J3VnYcqRYRcHZkv0vGQoE",
   authDomain: "essay-espresso.firebaseapp.com",
   projectId: "essay-espresso",
 };
 
-// ---- EDIT THIS: your teacher Google email ----
+// ---- EDIT: your teacher Google email ----
 const TEACHER_EMAIL = "tojamesjwkim@gmail.com";
 
 // ============================================================
-//  No edits needed below this line.
+//  No edits needed below.
 // ============================================================
 
 firebase.initializeApp(FIREBASE_CONFIG);
@@ -22,77 +22,81 @@ const auth = firebase.auth();
 const db = firebase.firestore();
 const googleProvider = new firebase.auth.GoogleAuthProvider();
 
-// ---- tiny helpers ----
+const studentsCol = db.collection("students");
+const wsCol       = db.collection("worksheets");
+const boxesCol    = db.collection("boxes");
+const siteRef     = db.collection("site").doc("config");
+const teacherRef  = db.collection("teacher").doc("profile");
+const goldLogCol  = db.collection("goldlog");
+const feedbackCol = db.collection("feedback");
+const templatesCol= db.collection("templates");
+
 function $(id) { return document.getElementById(id); }
 
 function isTeacher(user) {
   return !!user && (user.email || "").toLowerCase() === TEACHER_EMAIL.toLowerCase();
 }
 
-// LA time, labelled "PT" so it's correct across daylight saving.
+// LA time, labelled PT (correct across daylight saving)
 function fmtTime(ts) {
   if (!ts) return "";
   var d = ts.toDate ? ts.toDate() : new Date(ts);
-  var s = d.toLocaleString("en-US", {
+  return d.toLocaleString("en-US", {
     timeZone: "America/Los_Angeles",
     year: "numeric", month: "numeric", day: "numeric",
     hour: "numeric", minute: "2-digit"
-  });
-  return s + " PT";
+  }) + " PT";
 }
 
-function loginWithGoogle() {
-  return auth.signInWithPopup(googleProvider);
-}
+function loginWithGoogle() { return auth.signInWithPopup(googleProvider); }
+function logout() { auth.signOut().then(function () { location.href = "index.html"; }); }
 
-function logout() {
-  auth.signOut().then(function () { window.location.href = "index.html"; });
-}
-
-// ---- student status lives in: students/{uid} ----
-// status: "pending" (just signed in) or "approved". Teacher is auto-approved.
-function studentDocRef(uid) { return db.collection("students").doc(uid); }
-
-// Ensure a signed-in non-teacher has a student doc; create as pending on first sight.
+// Create a pending student doc on first sign-in.
 function ensureStudentDoc(user) {
-  var ref = studentDocRef(user.uid);
+  var ref = studentsCol.doc(user.uid);
   return ref.get().then(function (snap) {
-    if (!snap.exists) {
-      return ref.set({
-        email: user.email,
-        name: user.displayName || user.email.split("@")[0],
-        photo: "",
-        status: "pending",
-        bg: "",           // appearance: pastel hex or image url
-        createdAt: firebase.firestore.FieldValue.serverTimestamp(),
-      }).then(function () { return ref.get(); });
-    }
-    return snap;
+    if (snap.exists) return snap;
+    return ref.set({
+      email: user.email,
+      name: user.displayName || (user.email || "").split("@")[0],
+      photo: "", bg: "", opacity: 90,
+      gold: 0,
+      status: "pending",
+      viewers: [],
+      createdAt: firebase.firestore.FieldValue.serverTimestamp(),
+    }).then(function () { return ref.get(); });
   });
 }
 
-// Gate a page. role = "teacher" | "student" | "any".
-// Calls ok(user, studentData) if allowed; otherwise redirects appropriately.
-function requireRole(role, ok) {
+// Find which students (if any) this email is a parent-viewer for.
+function findViewableStudents(email) {
+  return studentsCol.where("viewers", "array-contains", (email || "").toLowerCase())
+    .get().then(function (snap) {
+      var out = [];
+      snap.forEach(function (d) { out.push(Object.assign({ uid: d.id }, d.data())); });
+      return out;
+    }).catch(function () { return []; });
+}
+
+// Resolve a signed-in user to a role, then route/callback.
+// cb({ role: 'teacher'|'student'|'parent'|'pending'|'none', user, data, children })
+function resolveRole(cb) {
   auth.onAuthStateChanged(function (user) {
-    if (!user) { window.location.href = "index.html"; return; }
+    if (!user) { cb({ role: "none", user: null }); return; }
 
-    if (isTeacher(user)) {
-      if (role === "student") { window.location.href = "dashboard.html"; return; }
-      ok(user, { name: "Teacher", status: "approved", teacher: true });
-      return;
-    }
-
-    // non-teacher
-    if (role === "teacher") { window.location.href = "student.html"; return; }
+    if (isTeacher(user)) { cb({ role: "teacher", user: user }); return; }
 
     ensureStudentDoc(user).then(function (snap) {
       var data = snap.data();
-      if (data.status !== "approved") {
-        window.location.href = "student.html"; // student.html shows the pending screen
+      if (data && data.status === "approved") {
+        cb({ role: "student", user: user, data: data });
         return;
       }
-      ok(user, data);
+      // Not an approved student — maybe a parent viewer?
+      findViewableStudents(user.email).then(function (kids) {
+        if (kids.length) { cb({ role: "parent", user: user, children: kids }); return; }
+        cb({ role: "pending", user: user, data: data });
+      });
     });
   });
 }

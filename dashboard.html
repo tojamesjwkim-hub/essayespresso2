@@ -7,122 +7,218 @@
 <link rel="stylesheet" href="style.css">
 </head>
 <body>
-
 <div id="runnerTop" class="runner"></div>
 
 <div class="wrap">
-
   <div class="sitehead">
     <span id="siteIcon" class="siteicon">icon</span>
-    <span id="siteTitle" class="sitetitle">EssayEspresso</span>
-    <span style="flex:1;"></span>
-    <button id="apperanceBtn">⚙ Appearance</button>
+    <span id="siteTitle" class="sitetitle"></span>
   </div>
-  <p class="muted">Teacher Dashboard · <span id="whoName">Jim</span> · <span id="whoEmail"></span> · <a href="#" id="logoutLink">Log out</a></p>
 
-  <div class="tabs" id="tabs">
+  <div id="err" class="err hidden"></div>
+
+  <!-- teacher profile bar -->
+  <div class="card">
+    <div class="cardhead">
+      <div style="display:flex;align-items:center;gap:9px;">
+        <span id="myAvatar" class="avatar"></span>
+        <div><strong id="myName" style="font-size:16px;">Jim</strong>
+          <span class="gold"><span class="dot"></span><span id="myGold">0</span> gold</span>
+          <span class="muted">· teacher</span><br>
+          <span class="muted" id="myEmail"></span></div>
+      </div>
+      <div>
+        <button id="gameBtn">Game</button>
+        <button id="profBtn">Profile</button>
+        <button id="apBtn">⚙ Appearance</button>
+        <button id="logoutBtn">Log out</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="gamePanel" class="card hidden">
+    <div class="cardhead"><h2>Game (play-test)</h2><button id="gameClose">Close ▴</button></div>
+    <p style="margin-top:8px;">Your gold: <strong id="gameGold">0</strong></p>
+    <p class="muted">The mini-game will live here.</p>
+  </div>
+
+  <div id="apPanel" class="card fill hidden">
+    <h2>Appearance</h2>
+    <p class="muted">Background colour:</p><div id="apSwatches" style="margin-bottom:6px;"></div>
+    <p class="muted">…or image URL:</p><input id="apBg" type="text" placeholder="#c9dcf0 or https://…">
+    <p class="muted" style="margin-top:8px;">Opacity — <span id="apOpVal">90</span>% (max 90)</p>
+    <input id="apOpacity" type="range" min="0" max="90" value="90" style="width:100%;">
+    <div style="margin-top:10px;"><button class="primary" id="apSave">Save</button><button id="apCancel">Cancel</button></div>
+  </div>
+
+  <div class="tabs">
     <div class="tab active" data-panel="students">Students</div>
+    <div class="tab" data-panel="questions">Questions <span id="qBadge" class="badge hidden">0</span></div>
     <div class="tab" data-panel="worksheets">Worksheets</div>
-    <div class="tab" data-panel="assign">Assign</div>
-    <div class="tab" data-panel="answers">Answers</div>
-    <div class="tab" data-panel="boxes">Student Boxes</div>
-    <div class="tab" data-panel="mine">My Profile</div>
+    <div class="tab" data-panel="goldset">Gold settings</div>
+    <div class="tab" data-panel="goldlog">Gold log</div>
+    <div class="tab" data-panel="boxes">Student boxes</div>
+    <div class="tab" data-panel="feedback">Parent feedback</div>
+    <div class="tab" data-panel="profile">Profile</div>
   </div>
 
-  <!-- ================= STUDENTS ================= -->
+  <!-- STUDENTS -->
   <div class="panel active" id="students">
     <h2>Waiting for approval</h2>
     <div id="pendingList"><p class="muted">Loading…</p></div>
-    <h2 style="margin-top:24px;">Approved students</h2>
-    <div id="approvedList"><p class="muted">Loading…</p></div>
+    <h2 style="margin-top:20px;">Approved students</h2>
+    <div id="approvedList"></div>
   </div>
 
-  <!-- ================= WORKSHEETS ================= -->
+  <!-- QUESTIONS -->
+  <div class="panel" id="questions">
+    <h2>Questions from students</h2>
+    <div class="filterbar">
+      <span class="muted">Student:</span>
+      <select id="qStudentFilter" style="min-width:150px;"><option value="">All students</option></select>
+      <select id="qSort" style="min-width:140px;">
+        <option value="unanswered">Unanswered first</option>
+        <option value="newest">Newest first</option>
+      </select>
+      <button id="qRefresh">⟳ Refresh</button>
+    </div>
+    <div id="questionList"><p class="muted">Loading…</p></div>
+  </div>
+
+  <!-- WORKSHEETS -->
   <div class="panel" id="worksheets">
-    <h2>Worksheets <span class="muted">(master list — students only see assigned ones)</span></h2>
-    <div style="display:flex; gap:8px; margin-bottom:16px; flex-wrap:wrap;">
-      <input id="newWsTitle" type="text" placeholder="New worksheet title…" style="flex:1; min-width:180px;">
+    <h2>Worksheets</h2>
+    <div class="filterbar">
+      <input id="newWsTitle" type="text" placeholder="New worksheet title…" style="flex:1;min-width:170px;">
       <button class="primary" id="createWsBtn">+ Create</button>
-      <button id="importWsBtn">⬆ Import</button>
-      <button id="exportWsBtn">⬇ Export all</button>
+      <button id="importCsvBtn">⬆ Import CSV</button>
+      <button id="exportWsCsvBtn">⬇ Export CSV</button>
+      <button id="templateBtn">CSV template</button>
     </div>
-    <input id="importWsFile" type="file" accept="application/json" class="hidden">
-    <div id="wsList"><p class="muted">Loading…</p></div>
-  </div>
-
-  <!-- ================= ASSIGN ================= -->
-  <div class="panel" id="assign">
-    <h2>Assign worksheets</h2>
-    <p class="muted">Pick a student, add whole worksheets, set their order with ▲▼.</p>
-    <select id="assignStudent" style="width:100%; max-width:420px; margin-bottom:14px;"></select>
-    <div id="assignArea"><p class="muted">Pick a student above.</p></div>
-  </div>
-
-  <!-- ================= ANSWERS ================= -->
-  <div class="panel" id="answers">
-    <h2>Student answers</h2>
-    <div style="display:flex; gap:8px; margin-bottom:16px; flex-wrap:wrap;">
-      <select id="ansWsFilter" style="flex:1; min-width:160px;"><option value="">All worksheets</option></select>
-      <select id="ansStuFilter" style="flex:1; min-width:160px;"><option value="">All students</option></select>
-      <button id="ansRefresh">Refresh</button>
+    <input id="importCsvFile" type="file" accept=".csv,text/csv" class="hidden">
+    <div class="filterbar" style="border:1px solid #000;background:#fff;padding:7px 9px;">
+      <input id="tagFilter" type="text" placeholder="Filter by tag or title…" style="flex:1;min-width:170px;">
+      <span class="muted">or click:</span>
+      <span id="tagChips"></span>
+      <button id="clearFilter">clear</button>
     </div>
-    <div id="answersList"><p class="muted">Choose filters and Refresh.</p></div>
+    <p class="muted" style="margin:0 0 8px;">Tags are yours only — students never see them.</p>
+    <div id="wsList"></div>
   </div>
 
-  <!-- ================= STUDENT BOXES ================= -->
+  <!-- GOLD SETTINGS -->
+  <div class="panel" id="goldset">
+    <h2>Gold per worksheet</h2>
+    <div id="goldSetList"></div>
+    <h2 style="margin-top:20px;">My own gold (play-testing)</h2>
+    <div class="card fill">
+      <p style="margin:0 0 7px;">Your balance: <span class="gold"><span class="dot"></span><span id="myGold2">0</span> gold</span></p>
+      <div class="filterbar">
+        <span class="muted">Set to:</span>
+        <input id="teacherGoldInput" type="number" min="0" max="99999" style="width:100px;">
+        <button class="primary" id="setTeacherGold">Set</button>
+        <button data-add="100">+100</button>
+        <button data-add="1000">+1000</button>
+        <button id="maxGold">Max (99999)</button>
+        <button id="zeroGold">Zero</button>
+      </div>
+      <p class="muted" style="margin:6px 0 0;">Your gold never appears in the student log.</p>
+    </div>
+  </div>
+
+  <!-- GOLD LOG -->
+  <div class="panel" id="goldlog">
+    <h2>Gold history log</h2>
+    <div class="filterbar">
+      <span class="muted">Student:</span>
+      <select id="logStudentFilter" style="min-width:150px;"><option value="">All students</option></select>
+      <select id="logSort" style="min-width:140px;">
+        <option value="newest">Newest first</option>
+        <option value="oldest">Oldest first</option>
+        <option value="biggest">Biggest first</option>
+      </select>
+      <button id="logRefresh">⟳</button>
+      <button id="logCsv">⬇ CSV</button>
+    </div>
+    <div id="logTable"></div>
+    <p class="muted" style="margin-top:8px;">Awarded per submitted attempt — 5 genuine attempts = 5 awards. This log is your receipt.</p>
+  </div>
+
+  <!-- STUDENT BOXES -->
   <div class="panel" id="boxes">
-    <h2>Custom boxes on student dashboards</h2>
-    <div style="display:flex; gap:8px; margin-bottom:16px; flex-wrap:wrap;">
-      <input id="newBoxTitle" type="text" placeholder="New box title…" style="flex:1; min-width:180px;">
+    <h2>Student boxes</h2>
+    <p class="muted">A student sees no boxes unless you create one and assign it.</p>
+    <div class="filterbar">
+      <input id="newBoxTitle" type="text" placeholder="New box title…" style="flex:1;min-width:170px;">
       <button class="primary" id="createBoxBtn">+ Create box</button>
     </div>
-    <div id="boxesList"><p class="muted">Loading…</p></div>
+    <div id="boxList"></div>
   </div>
 
-  <!-- ================= MY PROFILE ================= -->
-  <div class="panel" id="mine">
+  <!-- PARENT FEEDBACK -->
+  <div class="panel" id="feedback">
+    <h2>Parent feedback</h2>
+    <p class="muted">Only the parent sees these — never the student.</p>
+    <div class="card fill">
+      <div class="filterbar">
+        <span class="muted">About:</span>
+        <select id="fbStudent" style="min-width:150px;"></select>
+        <span class="muted">Template:</span>
+        <select id="fbTemplate" style="min-width:160px;"><option value="">— none —</option></select>
+        <button id="fbInsert">Insert</button>
+      </div>
+      <div id="fbEditorHolder"></div>
+      <div style="margin-top:8px;"><button class="primary" id="fbPost">Post note (timestamped)</button>
+        <span id="fbMsg" class="muted"></span></div>
+    </div>
+
+    <h2 style="margin-top:18px;">My templates</h2>
+    <div id="templateList"></div>
+    <div class="filterbar" style="margin-top:8px;">
+      <input id="newTemplateName" type="text" placeholder="New template name…" style="flex:1;min-width:170px;">
+      <button class="primary" id="createTemplate">+ New template</button>
+    </div>
+
+    <h2 style="margin-top:18px;">Posted notes</h2>
+    <div class="filterbar">
+      <span class="muted">Student:</span>
+      <select id="fbFilter" style="min-width:150px;"><option value="">All students</option></select>
+      <button id="fbRefresh">⟳</button>
+    </div>
+    <div id="fbList"></div>
+  </div>
+
+  <!-- PROFILE -->
+  <div class="panel" id="profile">
     <h2>My profile</h2>
     <p class="muted">Display name</p><input id="pName" type="text">
-    <p class="muted">Profile picture — paste URL or upload (auto-shrunk)</p>
+    <p class="muted">Profile picture — URL or upload</p>
     <input id="pPhoto" type="url" placeholder="https://…">
-    <button id="pPhotoUpload" style="margin-top:6px;">Choose file…</button>
+    <button id="pPhotoUpload" style="margin-top:5px;">Choose file…</button>
     <input id="pPhotoFile" type="file" accept="image/*" class="hidden">
 
-    <h2 style="margin-top:22px;">My status stamps <span class="muted">(set once, reused everywhere)</span></h2>
+    <h2 style="margin-top:18px;">Status stamps <span class="muted">(set once, reused)</span></h2>
     <p><span class="good">Good job ✓</span> image:
-      <button id="goodUpload">Choose file…</button> or <input id="goodUrl" type="url" placeholder="image URL" style="width:200px;"></p>
+      <button id="goodUpload">Choose file…</button> <input id="goodUrl" type="url" placeholder="image URL" style="width:200px;"></p>
     <p><span class="ng">Try again ✗</span> image:
-      <button id="ngUpload">Choose file…</button> or <input id="ngUrl" type="url" placeholder="image URL" style="width:200px;"></p>
+      <button id="ngUpload">Choose file…</button> <input id="ngUrl" type="url" placeholder="image URL" style="width:200px;"></p>
     <input id="goodFile" type="file" accept="image/*" class="hidden">
     <input id="ngFile" type="file" accept="image/*" class="hidden">
 
-    <h2 style="margin-top:22px;">Backup — export everything</h2>
-    <div class="card fill">
-      <button class="primary" id="exportAllBtn">⬇ Export ALL data (backup)</button>
-      <p class="muted" style="margin:8px 0 0;">Downloads one file with every worksheet, all students' answers &amp; attempts, comments, status marks, assignments, and boxes. Your own separate copy — do this now and then.</p>
-    </div>
+    <h2 style="margin-top:18px;">Parent page blurb</h2>
+    <p class="muted">Shown at the top of every parent's page.</p>
+    <textarea id="pBlurb" style="min-height:50px;"></textarea>
 
-    <div style="margin-top:14px;"><button class="primary" id="saveProfileBtn">Save profile</button> <span id="profileSaved" class="muted"></span></div>
-  </div>
+    <h2 style="margin-top:18px;">Backup</h2>
+    <button class="primary" id="exportAllBtn">⬇ Export ALL (JSON)</button>
+    <button id="exportAnswersCsv">⬇ All answers (CSV)</button>
 
-</div>
-
-<div id="runnerBottom" class="runner" style="margin-top:30px;"></div>
-
-<!-- appearance modal -->
-<div id="appearancePanel" class="wrap hidden" style="max-width:520px;">
-  <div class="card fill">
-    <h2 style="margin-top:0;">Appearance</h2>
-    <p class="muted">Background colour:</p>
-    <div id="apSwatches" style="margin-bottom:8px;"></div>
-    <p class="muted">…or paste an image URL (shown faded):</p>
-    <input id="apBg" type="text" placeholder="#eef6ef or https://image…">
-    <div style="margin-top:12px;">
-      <button class="primary" id="apSave">Save</button>
-      <button id="apCancel">Cancel</button>
-    </div>
+    <div style="margin-top:14px;"><button class="primary" id="saveProfileBtn">Save profile</button>
+      <span id="profileSaved" class="muted"></span></div>
   </div>
 </div>
+
+<div id="runnerBottom" class="runner" style="margin-top:24px;"></div>
 
 <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-auth-compat.js"></script>

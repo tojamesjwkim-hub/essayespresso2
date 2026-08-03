@@ -1,0 +1,171 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Answers &amp; marking</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<div id="runnerTop" class="runner"></div>
+<div class="wrap">
+  <p style="margin-top:14px;"><a href="dashboard.html">← Dashboard</a> · <a href="assign.html">Assign</a></p>
+  <h1>Answers &amp; marking</h1>
+  <div id="err" class="err hidden"></div>
+  <div class="filterbar">
+    <span class="muted">Student:</span>
+    <select id="stuFilter" style="min-width:150px;"><option value="">All students</option></select>
+    <span class="muted">Worksheet:</span>
+    <select id="wsFilter" style="min-width:150px;"><option value="">All worksheets</option></select>
+    <label><input type="checkbox" id="onlySubmitted" style="width:auto;"> only submitted</label>
+    <button class="primary" id="loadBtn">Load</button>
+  </div>
+  <div id="list"><p class="muted">Choose filters and press Load.</p></div>
+</div>
+<div id="runnerBottom" class="runner" style="margin-top:24px;"></div>
+
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-auth-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore-compat.js"></script>
+<script src="config.js"></script>
+<script src="shared-ui.js"></script>
+<script>
+var students=[], worksheets=[], teacherProfile={};
+
+auth.onAuthStateChanged(function(user){
+  if(!user){ location.href="index.html"; return; }
+  if(!isTeacher(user)){ location.href="student.html"; return; }
+  loadSite();
+  teacherRef.get().then(function(s){
+    if(s.exists){ teacherProfile=s.data(); applyBackground(teacherProfile.bg,teacherProfile.opacity); }
+  });
+  Promise.all([
+    studentsCol.where("status","==","approved").get(),
+    wsCol.orderBy("order","asc").get()
+  ]).then(function(r){
+    r[0].forEach(function(d){ students.push(Object.assign({uid:d.id},d.data())); });
+    r[1].forEach(function(d){ worksheets.push(Object.assign({id:d.id},d.data())); });
+    students.forEach(function(s){
+      $("stuFilter").innerHTML+='<option value="'+s.uid+'">'+esc(s.name||s.email)+'</option>';
+    });
+    worksheets.forEach(function(w){
+      $("wsFilter").innerHTML+='<option value="'+w.id+'">'+esc(w.title)+'</option>';
+    });
+    var pre=new URLSearchParams(location.search).get("student");
+    if(pre) $("stuFilter").value=pre;
+    load();
+  }).catch(handleErr("Could not load"));
+  $("loadBtn").onclick=load;
+});
+
+function load(){
+  var sf=$("stuFilter").value, wf=$("wsFilter").value, only=$("onlySubmitted").checked;
+  var list=$("list"); list.innerHTML='<p class="spinner">Loading…</p>';
+  var stus=students.filter(function(s){ return !sf||s.uid===sf; });
+  var wss=worksheets.filter(function(w){ return !wf||w.id===wf; });
+  var tasks=[];
+  stus.forEach(function(s){
+    wss.forEach(function(w){
+      tasks.push(studentsCol.doc(s.uid).collection("answers").doc(w.id).collection("attempts")
+        .orderBy("createdAt","asc").get().then(function(snap){
+          var a=[]; snap.forEach(function(d){ a.push(Object.assign({id:d.id},d.data())); });
+          if(only) a=a.filter(function(x){return x.submitted;});
+          return {student:s,ws:w,attempts:a};
+        }).catch(function(){ return {student:s,ws:w,attempts:[]}; }));
+    });
+  });
+  Promise.all(tasks).then(function(res){
+    res=res.filter(function(r){return r.attempts.length;});
+    list.innerHTML="";
+    if(!res.length){ list.innerHTML='<p class="muted">Nothing matches those filters.</p>'; return; }
+    res.forEach(function(r){
+      r.attempts.forEach(function(a){ list.appendChild(card(r.student,r.ws,a)); });
+    });
+  });
+}
+
+function card(student,ws,att){
+  var c=el("div","card");
+  var head=el("div","cardhead");
+  var name=document.createElement("input");
+  name.type="text"; name.value=att.name||"Attempt"; name.style.cssText="width:130px;";
+  var h=el("div","muted");
+  h.innerHTML='<strong>'+esc(student.name||student.email)+'</strong> · '+esc(ws.title)+' · ';
+  h.appendChild(name);
+  if(att.submitted) h.appendChild(el("span","pill"," submitted "+esc(fmtTime(att.submittedAt))));
+  head.appendChild(h);
+  c.appendChild(head);
+
+  var responses=att.responses||{}, comments=att.comments||{}, drawings=att.drawings||{};
+  var cmtInputs=[], respEditors=[];
+
+  (ws.questions||[]).forEach(function(q,i){
+    var qd=el("div"); qd.style.margin="10px 0";
+    qd.appendChild(el("p",null,"<strong>"+esc(q.label||("Question "+(i+1)))+".</strong> "+esc(q.text||"")));
+
+    if(q.type==="draw"){
+      if(drawings[i]) qd.innerHTML+='<img src="'+esc(drawings[i])+'" style="max-width:100%;border:1px solid #000;">';
+      else qd.appendChild(el("p","muted","(no drawing)"));
+    } else if(q.type==="task"){
+      qd.appendChild(el("p","muted","(task — nothing submitted)"));
+    } else if(q.type==="check"){
+      qd.appendChild(el("p",null, responses[i]==="yes" ? "✓ ticked" : "— not ticked"));
+    } else if(q.type==="mc"){
+      qd.appendChild(el("p",null,"Chose: <strong>"+esc(responses[i]||"(nothing)")+"</strong>"+
+        (q.correct>=0 ? '<span class="muted"> · correct: '+esc((q.options||[])[q.correct]||"")+'</span>' : "")));
+    } else {
+      var ed=makeRichEditor(responses[i]||"");
+      qd.appendChild(ed);
+      qd.appendChild(el("span","muted","↑ you can edit their text"));
+      respEditors.push({i:i,get:function(){return ed.getHTML();}});
+    }
+
+    var cm=document.createElement("input");
+    cm.type="text"; cm.placeholder="Comment (student sees this)"; cm.value=comments[i]||"";
+    cm.style.marginTop="5px";
+    qd.appendChild(cm);
+    cmtInputs.push({i:i,el:cm});
+    c.appendChild(qd);
+  });
+
+  if(att.photo){
+    c.appendChild(el("p","muted","📷 photo attached:"));
+    var img=document.createElement("img");
+    img.src=att.photo; img.style.cssText="max-width:260px;border:1px solid #000;display:block;";
+    c.appendChild(img);
+  }
+
+  var status=att.status||"";
+  var bar=el("div"); bar.style.margin="10px 0";
+  bar.appendChild(el("span",null,"Mark: "));
+  var ngB=mkBtn("Try again ✗", status==="ng"?"ng":"");
+  var okB=mkBtn("Good job ✓", status==="good"?"good":"");
+  ngB.onclick=function(){ status="ng"; ngB.className="ng"; okB.className=""; };
+  okB.onclick=function(){ status="good"; okB.className="good"; ngB.className=""; };
+  bar.appendChild(ngB); bar.appendChild(okB);
+  c.appendChild(bar);
+
+  var msg=el("span","muted");
+  var actions=el("div");
+  actions.appendChild(mkBtn("Save","primary",function(){
+    var resp=Object.assign({},responses);
+    respEditors.forEach(function(r){ resp[r.i]=r.get(); });
+    var cmt={};
+    cmtInputs.forEach(function(x){ if(x.el.value.trim()) cmt[x.i]=x.el.value.trim(); });
+    studentsCol.doc(student.uid).collection("answers").doc(ws.id).collection("attempts").doc(att.id)
+      .set({name:name.value.trim()||"Attempt",responses:resp,comments:cmt,status:status},{merge:true})
+      .then(function(){ msg.textContent="Saved ✓"; setTimeout(function(){msg.textContent="";},2000); })
+      .catch(handleErr("Could not save"));
+  }));
+  actions.appendChild(mkBtn("Delete attempt","",function(){
+    if(!confirm("Delete this attempt?")) return;
+    studentsCol.doc(student.uid).collection("answers").doc(ws.id).collection("attempts").doc(att.id)
+      .delete().then(load).catch(handleErr("Could not delete"));
+  }));
+  actions.appendChild(msg);
+  c.appendChild(actions);
+  return c;
+}
+</script>
+</body>
+</html>

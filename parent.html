@@ -1,0 +1,260 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Progress</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<div id="runnerTop" class="runner"></div>
+<div id="viewBar" class="viewbar hidden"></div>
+
+<div class="wrap wrap-narrow">
+  <div id="loading" class="spinner">Loading…</div>
+  <div id="err" class="err hidden"></div>
+
+  <!-- child picker -->
+  <div id="picker" class="hidden">
+    <div class="sitehead"><span id="siteIcon" class="siteicon">icon</span><span id="siteTitle" class="sitetitle"></span></div>
+    <div class="card" style="text-align:center;">
+      <h2>Which child would you like to view?</h2>
+      <div id="kidList" style="margin-top:10px;"></div>
+      <p style="margin-top:12px;"><button id="pickLogout">Log out</button></p>
+    </div>
+  </div>
+
+  <!-- the view -->
+  <div id="app" class="hidden">
+    <div id="blurb" class="blurb"></div>
+
+    <div class="card">
+      <div class="cardhead"><h2 id="fbHeading">Feedback summary</h2><button id="fbToggle">Collapse ▴</button></div>
+      <div id="fbBody"><p class="muted">Loading…</p></div>
+    </div>
+
+    <div class="card">
+      <div class="cardhead">
+        <div style="display:flex;align-items:center;gap:9px;">
+          <span id="kidAvatar" class="avatar"></span>
+          <div><strong id="kidName" style="font-size:16px;"></strong>
+            <span class="gold"><span class="dot"></span><span id="kidGold">0</span> gold</span><br>
+            <span class="muted" id="kidEmail"></span></div>
+        </div>
+        <div><button id="logoutBtn">Log out</button></div>
+      </div>
+      <p class="muted" style="margin:8px 0 0;" id="asWho"></p>
+    </div>
+
+    <div class="card">
+      <div class="cardhead"><h2 id="workHeading">Assigned work</h2><button id="refreshBtn">⟳</button></div>
+      <div id="workList" style="margin-top:8px;"></div>
+    </div>
+
+    <div id="openArea"></div>
+  </div>
+</div>
+
+<div id="runnerBottom" class="runner" style="margin-top:24px;"></div>
+
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-auth-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore-compat.js"></script>
+<script src="config.js"></script>
+<script src="shared-ui.js"></script>
+<script>
+var VIEWER=null, kids=[], kid=null, teacherProfile={}, openWsId=null;
+
+auth.onAuthStateChanged(function(user){
+  if(!user){ location.href="index.html"; return; }
+  VIEWER=user;
+  loadSite();
+  teacherRef.get().then(function(s){ if(s.exists) teacherProfile=s.data(); paintBlurb(); });
+
+  if(isTeacher(user)){ location.href="dashboard.html"; return; }
+
+  findViewableStudents(user.email).then(function(list){
+    kids=list;
+    if(!kids.length){ location.href="student.html"; return; }
+    $("loading").classList.add("hidden");
+    if(kids.length===1){ choose(kids[0]); return; }
+    showPicker();
+  }).catch(handleErr("Could not load"));
+});
+
+function paintBlurb(){
+  $("blurb").textContent = teacherProfile.parentBlurb || SITE_DEFAULTS.parentBlurb;
+}
+function tName(){ return teacherProfile.name || "Jim"; }
+
+function showPicker(){
+  $("picker").classList.remove("hidden");
+  siteRef.get().then(function(s){
+    var d=s.exists?s.data():{};
+    if($("siteTitle")) $("siteTitle").textContent=d.title||SITE_DEFAULTS.title;
+    if(d.icon) $("siteIcon").innerHTML='<img src="'+esc(d.icon)+'" alt="">';
+    applyBackground(d.bg,d.opacity);
+  });
+  var box=$("kidList"); box.innerHTML="";
+  kids.forEach(function(k){
+    var b=mkBtn("","",function(){ $("picker").classList.add("hidden"); choose(k); });
+    b.style.cssText="display:inline-block;padding:12px 20px;margin:5px;text-align:left;";
+    b.innerHTML='<strong>'+esc(k.name||k.email)+'</strong>';
+    box.appendChild(b);
+  });
+  $("pickLogout").onclick=logout;
+}
+
+function choose(k){
+  kid=k;
+  $("app").classList.remove("hidden");
+  var b=$("viewBar"); b.classList.remove("hidden");
+  b.innerHTML='<span>👁 Viewing <strong>'+esc(k.name||k.email)+"'s</strong> progress (read-only)</span>";
+  if(kids.length>1){
+    var sw=mkBtn("Switch child","",function(){
+      $("app").classList.add("hidden"); $("openArea").innerHTML=""; b.classList.add("hidden"); showPicker();
+    });
+    b.appendChild(sw);
+  }
+  applyBackground(k.bg,k.opacity);
+  $("kidName").textContent=k.name||(k.email||"").split("@")[0];
+  $("kidEmail").textContent=k.email||"";
+  $("kidGold").textContent=k.gold||0;
+  $("kidAvatar").innerHTML=k.photo?'<img src="'+esc(k.photo)+'" alt="">':
+    esc((k.name||k.email||"?").charAt(0).toUpperCase());
+  $("asWho").textContent="Signed in as "+VIEWER.email+" — you can look, but not change anything.";
+  $("fbHeading").textContent=tName()+"'s feedback summary";
+  $("workHeading").textContent=(k.name||"Their")+" assigned work";
+  $("logoutBtn").onclick=logout;
+  $("refreshBtn").onclick=function(){ loadWork(); };
+  makeCollapsible($("fbBody"),$("fbToggle"),true);
+  loadFeedback(); loadWork();
+}
+
+function loadFeedback(){
+  feedbackCol.where("uid","==",kid.uid).limit(50).get().then(function(snap){
+    var rows=[]; snap.forEach(function(d){ rows.push(d.data()); });
+    rows.sort(function(a,b){
+      var x=a.at&&a.at.toMillis?a.at.toMillis():0, y=b.at&&b.at.toMillis?b.at.toMillis():0;
+      return y-x;
+    });
+    var box=$("fbBody"); box.innerHTML="";
+    if(!rows.length){ box.innerHTML='<p class="muted">No notes yet.</p>'; return; }
+    rows.forEach(function(r){
+      var d=el("div","comment");
+      d.innerHTML="<strong>"+esc(fmtTime(r.at))+"</strong>"+(r.html||"");
+      box.appendChild(d);
+    });
+  }).catch(function(e){ $("fbBody").innerHTML='<p class="muted">Could not load notes.</p>'; });
+}
+
+function loadWork(){
+  studentsCol.doc(kid.uid).collection("assignments").get().then(function(snap){
+    var list=[]; snap.forEach(function(d){ list.push(Object.assign({wsId:d.id},d.data())); });
+    list.sort(function(a,b){ return (a.order||0)-(b.order||0); });
+    if(!list.length){ $("workList").innerHTML='<p class="muted">Nothing assigned yet.</p>'; return; }
+    return Promise.all(list.map(function(a){
+      return wsCol.doc(a.wsId).get().then(function(s){
+        return s.exists?Object.assign({id:s.id,assignment:a},s.data()):null;
+      });
+    })).then(function(ws){ renderWork(ws.filter(Boolean)); });
+  }).catch(handleErr("Could not load work"));
+}
+
+function renderWork(list){
+  var box=$("workList"); box.innerHTML="";
+  list.forEach(function(w,i){
+    var a=w.assignment;
+    var r=el("div","row");
+    var left=el("div","left");
+    left.style.cssText="display:flex;align-items:center;gap:8px;";
+    left.appendChild(el("span","qnum",(i+1)+"."));
+    var bx=el("span","box"); bx.style.cssText="width:30px;height:30px;border:2px solid #000;display:inline-flex;align-items:center;justify-content:center;font-size:19px;";
+    if(a.done){ bx.textContent="✓"; bx.style.background="#0a7d1b"; bx.style.color="#fff"; }
+    left.appendChild(bx);
+    var txt=el("span");
+    txt.innerHTML="<strong>"+esc(w.title)+"</strong><br>";
+    txt.appendChild(el("span","muted", a.done?("Done — "+esc(fmtTime(a.doneAt))):"not done yet"));
+    left.appendChild(txt);
+    r.appendChild(left);
+    r.appendChild(mkBtn(openWsId===w.id?"Close ▴":"View ▸", openWsId===w.id?"primary":"", function(){
+      if(openWsId===w.id){ openWsId=null; $("openArea").innerHTML=""; renderWork(list); return; }
+      openWsId=w.id; renderWork(list); viewWorksheet(w);
+      $("openArea").scrollIntoView({behavior:"smooth"});
+    }));
+    box.appendChild(r);
+  });
+}
+
+function viewWorksheet(w){
+  var area=$("openArea"); area.innerHTML='<p class="spinner">Loading…</p>';
+  studentsCol.doc(kid.uid).collection("answers").doc(w.id).collection("attempts")
+    .orderBy("createdAt","asc").get().then(function(snap){
+      var atts=[]; snap.forEach(function(d){ atts.push(Object.assign({id:d.id},d.data())); });
+      area.innerHTML="";
+      var card=el("div","card");
+      var head=el("div","cardhead");
+      head.appendChild(el("h2",null,esc(w.title)));
+      var right=el("div"); right.style.cssText="display:flex;gap:6px;align-items:center;flex-wrap:wrap;";
+      var sel=document.createElement("select"); sel.style.width="auto";
+      if(!atts.length) sel.innerHTML='<option>No attempts yet</option>';
+      atts.forEach(function(a,i){
+        sel.innerHTML+='<option value="'+a.id+'">'+esc(a.name||("Attempt "+(i+1)))+'</option>';
+      });
+      right.appendChild(sel);
+      var statusSpan=el("span");
+      right.appendChild(statusSpan);
+      right.appendChild(mkBtn("Close ▴","",function(){
+        openWsId=null; area.innerHTML=""; loadWork();
+      }));
+      head.appendChild(right);
+      card.appendChild(head);
+      var body=el("div");
+      card.appendChild(body);
+      area.appendChild(card);
+
+      function draw(){
+        var a=atts.filter(function(x){return x.id===sel.value;})[0]||atts[atts.length-1];
+        statusSpan.innerHTML="";
+        if(a && a.status==="good") statusSpan.appendChild(el("span","good","Good job ✓"));
+        if(a && a.status==="ng") statusSpan.appendChild(el("span","ng","Try again ✗"));
+        body.innerHTML="";
+        if(!a){ body.innerHTML='<p class="muted">Nothing submitted yet.</p>'; return; }
+        (w.questions||[]).forEach(function(q,i){
+          var d=el("div"); d.style.margin="10px 0";
+          d.appendChild(el("p",null,"<strong>"+esc(q.label||("Question "+(i+1)))+".</strong> "+esc(q.text||"")));
+          var r=(a.responses||{})[i];
+          if(q.type==="draw"){
+            var dr=(a.drawings||{})[i];
+            if(dr) d.innerHTML+='<img src="'+esc(dr)+'" style="max-width:100%;border:1px solid #000;">';
+            else d.appendChild(el("p","muted","(no drawing)"));
+          } else if(q.type==="check"){
+            d.appendChild(el("p",null, r==="yes"?"✓ ticked":"— not ticked"));
+          } else if(q.type==="task"){
+            d.appendChild(el("p","muted","(task — nothing to submit)"));
+          } else {
+            var ta=document.createElement("textarea");
+            ta.disabled=true; ta.style.minHeight="44px";
+            ta.value=stripHTML(r||"");
+            d.appendChild(ta);
+          }
+          var c=(a.comments||{})[i];
+          if(c) d.appendChild(el("div","comment","<strong>"+esc(tName())+" says…</strong> "+esc(c)));
+          body.appendChild(d);
+        });
+        if(a.photo){
+          body.appendChild(el("p","muted","📷 photo of their work:"));
+          var im=document.createElement("img");
+          im.src=a.photo; im.style.cssText="max-width:100%;border:1px solid #000;";
+          body.appendChild(im);
+        }
+        body.appendChild(el("p","muted","Read-only — you can see the work and comments, but can't change anything."));
+      }
+      sel.onchange=draw;
+      if(atts.length) sel.value=atts[atts.length-1].id;
+      draw();
+    }).catch(handleErr("Could not load attempts"));
+}
+</script>
+</body>
+</html>

@@ -1,662 +1,764 @@
 // ============================================================
-//  dashboard.js — teacher dashboard logic.
+//  dashboard.js — teacher dashboard.
 //
-//  DATA MODEL (Firestore collections):
-//   site/config                     → home page + shared settings
-//   teacher/profile                 → teacher name, photo, stamps, bg
-//   students/{uid}                  → {email,name,photo,status,bg}
-//   students/{uid}/assignments/{wsId} → {order, done, doneAt}
-//   worksheets/{wsId}               → {title, slideshow, instructions,
-//                                       allowPhotos, questions:[...], order}
-//     questions[]: {label, type, text, options:[], correct, link}
-//        type = "typed" | "mc" | "blank" | "task"
-//   students/{uid}/answers/{wsId}/attempts/{attemptId}
-//                                   → {name, createdAt, responses:{qIndex:val},
-//                                       photo, status, comments:{qIndex:txt}}
-//   boxes/{boxId}                   → {title, text, order, audience:"all"|"some",
-//                                       students:[uid], items:[{label,url,type}]}
+//  DATA MODEL
+//   site/config, teacher/profile
+//   students/{uid}  {email,name,photo,bg,opacity,gold,status,viewers[]}
+//     /assignments/{wsId}  {order,done,doneAt}
+//     /answers/{wsId}/attempts/{id} {name,responses,drawings,comments,status,photo,submitted}
+//     /questions/{id} {text,createdAt,reply,answered}
+//   worksheets/{wsId} {title,tags[],gold,slideshow,instructions,instructionEmbed,
+//                      allowPhotos,questions[],order}
+//   boxes/{id} {title,text,order,audience,students[],items[{label,url,mode}]}
+//   goldlog/{id} {uid,studentName,what,amount,at,kind}
+//   feedback/{id} {uid,studentName,html,at}
+//   templates/{id} {name,html}
 // ============================================================
 
-var teacherRef = db.collection("teacher").doc("profile");
-var wsCol = db.collection("worksheets");
-var boxesCol = db.collection("boxes");
-var studentsCol = db.collection("students");
+var TEACHER=null, teacherProfile={}, siteSettings={};
+var studentsCache=[], worksheetsCache=[], allTags=[], activeTag="";
+var fbEditor=null, templatesCache=[];
 
-var TEACHER = null;          // firebase user
-var teacherProfile = {};     // cached profile
-var siteSettings = {};       // cached site config
-var studentsCache = [];      // [{uid, ...data}]
-var worksheetsCache = [];    // [{id, ...data}]
-
-// ---- boot ----
-requireRole("teacher", function (user) {
-  TEACHER = user;
-  $("whoEmail").textContent = user.email;
+auth.onAuthStateChanged(function(user){
+  if(!user){ location.href="index.html"; return; }
+  if(!isTeacher(user)){ location.href="student.html"; return; }
+  TEACHER=user;
+  $("myEmail").textContent=user.email;
   wireTabs();
-  loadSite().then(function (s) { siteSettings = s; });
+  loadSite().then(function(s){ siteSettings=s; });
   loadTeacherProfile();
   loadStudents();
   loadWorksheets();
   loadBoxes();
-  wireProfileTab();
-  wireAppearance();
-  wireWorksheetTab();
-  wireAssignTab();
-  wireAnswersTab();
-  wireBoxesTab();
+  loadTemplates();
+  wireAll();
 });
 
-$("logoutLink").onclick = function (e) { e.preventDefault(); logout(); };
+function wireAll(){
+  $("logoutBtn").onclick=logout;
+  $("gameBtn").onclick=function(){ $("apPanel").classList.add("hidden"); $("gamePanel").classList.toggle("hidden"); };
+  $("gameClose").onclick=function(){ $("gamePanel").classList.add("hidden"); };
+  $("profBtn").onclick=function(){ document.querySelector('.tab[data-panel="profile"]').click(); };
 
-// ============================================================
-//  PROFILE
-// ============================================================
-function loadTeacherProfile() {
-  teacherRef.get().then(function (snap) {
-    teacherProfile = snap.exists ? snap.data() : {};
-    $("pName").value = teacherProfile.name || "Jim";
-    $("whoName").textContent = teacherProfile.name || "Jim";
-    $("pPhoto").value = teacherProfile.photo || "";
-    $("goodUrl").value = teacherProfile.goodStamp || "";
-    $("ngUrl").value = teacherProfile.ngStamp || "";
-    applyBackground(teacherProfile.bg || "");
-  });
+  $("apBtn").onclick=function(){
+    renderSwatches("apSwatches","apBg");
+    $("apBg").value=teacherProfile.bg||"";
+    $("apOpacity").value=teacherProfile.opacity==null?90:teacherProfile.opacity;
+    $("apOpVal").textContent=$("apOpacity").value;
+    $("gamePanel").classList.add("hidden");
+    $("apPanel").classList.toggle("hidden");
+  };
+  $("apOpacity").oninput=function(){ $("apOpVal").textContent=$("apOpacity").value; };
+  $("apCancel").onclick=function(){ $("apPanel").classList.add("hidden"); };
+  $("apSave").onclick=function(){
+    var upd={bg:$("apBg").value.trim(),opacity:Number($("apOpacity").value)};
+    teacherRef.set(upd,{merge:true}).then(function(){
+      Object.assign(teacherProfile,upd); applyBackground(upd.bg,upd.opacity);
+      $("apPanel").classList.add("hidden");
+    }).catch(handleErr("Could not save appearance"));
+  };
+
+  wireProfile(); wireWorksheets(); wireGold(); wireQuestions(); wireBoxes(); wireFeedback();
 }
 
-function wireProfileTab() {
-  wireImageUpload("pPhotoUpload", "pPhotoFile", "pPhoto", 240);
-  wireImageUpload("goodUpload", "goodFile", "goodUrl", 200);
-  wireImageUpload("ngUpload", "ngFile", "ngUrl", 200);
+// ---------------- profile ----------------
+function loadTeacherProfile(){
+  teacherRef.get().then(function(s){
+    teacherProfile=s.exists?s.data():{};
+    $("pName").value=teacherProfile.name||"Jim";
+    $("myName").textContent=teacherProfile.name||"Jim";
+    $("pPhoto").value=teacherProfile.photo||"";
+    $("goodUrl").value=teacherProfile.goodStamp||"";
+    $("ngUrl").value=teacherProfile.ngStamp||"";
+    $("pBlurb").value=teacherProfile.parentBlurb||SITE_DEFAULTS.parentBlurb;
+    var g=teacherProfile.gold||0;
+    $("myGold").textContent=g; $("myGold2").textContent=g; $("gameGold").textContent=g;
+    $("teacherGoldInput").value=g;
+    $("myAvatar").innerHTML=teacherProfile.photo?'<img src="'+esc(teacherProfile.photo)+'" alt="">':"☕";
+    applyBackground(teacherProfile.bg,teacherProfile.opacity);
+  });
+}
+function wireProfile(){
+  wireImageUpload("pPhotoUpload","pPhotoFile","pPhoto",240);
+  wireImageUpload("goodUpload","goodFile","goodUrl",200);
+  wireImageUpload("ngUpload","ngFile","ngUrl",200);
+  $("saveProfileBtn").onclick=function(){
+    var p={ name:$("pName").value.trim()||"Jim", photo:$("pPhoto").value.trim(),
+      goodStamp:$("goodUrl").value.trim(), ngStamp:$("ngUrl").value.trim(),
+      parentBlurb:$("pBlurb").value.trim() };
+    teacherRef.set(p,{merge:true}).then(function(){
+      Object.assign(teacherProfile,p);
+      $("myName").textContent=p.name;
+      $("myAvatar").innerHTML=p.photo?'<img src="'+esc(p.photo)+'" alt="">':"☕";
+      flash($("profileSaved"),"Saved ✓");
+    }).catch(handleErr("Save failed"));
+  };
+  $("exportAllBtn").onclick=exportAll;
+  $("exportAnswersCsv").onclick=exportAnswersCSV;
+}
+function flash(e,t){ e.textContent=t; setTimeout(function(){e.textContent="";},2000); }
 
-  $("saveProfileBtn").onclick = function () {
-    var p = {
-      name: $("pName").value.trim() || "Jim",
-      photo: $("pPhoto").value.trim(),
-      goodStamp: $("goodUrl").value.trim(),
-      ngStamp: $("ngUrl").value.trim(),
-      bg: teacherProfile.bg || "",
-    };
-    teacherRef.set(p, { merge: true }).then(function () {
-      teacherProfile = Object.assign(teacherProfile, p);
-      $("whoName").textContent = p.name;
-      $("profileSaved").textContent = "Saved ✓";
-      setTimeout(function () { $("profileSaved").textContent = ""; }, 2000);
+// ---------------- students ----------------
+function loadStudents(){
+  studentsCol.onSnapshot(function(snap){
+    studentsCache=[];
+    snap.forEach(function(d){ studentsCache.push(Object.assign({uid:d.id},d.data())); });
+    studentsCache.sort(function(a,b){ return (a.name||"").localeCompare(b.name||""); });
+    renderStudents(); fillStudentSelects();
+  },function(e){ $("pendingList").innerHTML='<p class="muted">Could not load students: '+esc(e.message)+'</p>'; });
+}
+
+function avatarOf(s){
+  return s.photo?'<img src="'+esc(s.photo)+'" alt="">':esc((s.name||s.email||"?").charAt(0).toUpperCase());
+}
+
+function renderStudents(){
+  var pending=studentsCache.filter(function(s){return s.status!=="approved";});
+  var approved=studentsCache.filter(function(s){return s.status==="approved";});
+
+  var pl=$("pendingList"); pl.innerHTML = pending.length?"":'<p class="muted">Nobody waiting.</p>';
+  pending.forEach(function(s){
+    var r=el("div","row");
+    r.innerHTML='<div class="left"><span class="avatar" style="width:26px;height:26px;font-size:12px;">'+avatarOf(s)+
+      '</span> <strong>'+esc(s.email)+'</strong></div>';
+    r.appendChild(mkBtn("Approve","primary",function(){
+      studentsCol.doc(s.uid).set({status:"approved"},{merge:true}).catch(handleErr("Could not approve"));
+    }));
+    r.appendChild(mkBtn("Remove","",function(){
+      if(confirm("Remove "+s.email+"?")) studentsCol.doc(s.uid).delete().catch(handleErr("Could not remove"));
+    }));
+    pl.appendChild(r);
+  });
+
+  var al=$("approvedList"); al.innerHTML = approved.length?"":'<p class="muted">No approved students yet.</p>';
+  approved.forEach(function(s){
+    var card=el("div","card");
+    var top=el("div"); top.style.cssText="display:flex;align-items:center;gap:9px;flex-wrap:wrap;";
+    top.innerHTML='<span class="avatar" style="width:28px;height:28px;font-size:13px;">'+avatarOf(s)+
+      '</span> <strong>'+esc(s.name||s.email)+'</strong> <span class="muted">('+esc(s.email)+')</span>';
+    var spacer=el("span"); spacer.style.flex="1"; top.appendChild(spacer);
+    top.appendChild(el("span","muted","gold:"));
+    var gi=document.createElement("input"); gi.type="number"; gi.value=s.gold||0; gi.style.width="72px";
+    top.appendChild(gi);
+    top.appendChild(mkBtn("Set","",function(){
+      var v=Number(gi.value)||0, diff=v-(s.gold||0);
+      studentsCol.doc(s.uid).set({gold:v},{merge:true}).then(function(){
+        if(diff) return goldLogCol.add({uid:s.uid,studentName:s.name||s.email,
+          what:"Manual adjustment by "+(teacherProfile.name||"Jim"),
+          amount:diff,at:firebase.firestore.FieldValue.serverTimestamp(),kind:"manual"});
+      }).catch(handleErr("Could not set gold"));
+    }));
+    top.appendChild(mkBtn("👁 View as","",function(){ location.href="student.html?as="+s.uid; }));
+    top.appendChild(mkBtn("Remove access","",function(){
+      if(confirm("Remove access for "+(s.name||s.email)+"?"))
+        studentsCol.doc(s.uid).set({status:"pending"},{merge:true});
+    }));
+    card.appendChild(top);
+
+    // parent viewers
+    var vw=el("div"); vw.style.cssText="border-top:1px solid #ccc;padding-top:7px;margin-top:8px;";
+    vw.appendChild(el("span","muted","<strong>Parent / guardian viewers</strong> (read-only):"));
+    var chips=el("div"); chips.style.cssText="display:flex;gap:6px;margin-top:5px;flex-wrap:wrap;align-items:center;";
+    (s.viewers||[]).forEach(function(v){
+      var chip=el("span","tag",esc(v)+" ✕");
+      chip.onclick=function(){
+        var next=(s.viewers||[]).filter(function(x){return x!==v;});
+        studentsCol.doc(s.uid).set({viewers:next},{merge:true}).catch(handleErr("Could not remove viewer"));
+      };
+      chips.appendChild(chip);
     });
-  };
-
-  $("exportAllBtn").onclick = exportAllData;
+    var vi=document.createElement("input"); vi.type="email"; vi.placeholder="add another email…";
+    vi.style.cssText="flex:1;min-width:160px;";
+    chips.appendChild(vi);
+    chips.appendChild(mkBtn("+ Add","primary",function(){
+      var e2=(vi.value||"").trim().toLowerCase();
+      if(!e2) return;
+      var next=(s.viewers||[]).slice(); if(next.indexOf(e2)<0) next.push(e2);
+      studentsCol.doc(s.uid).set({viewers:next},{merge:true})
+        .then(function(){ vi.value=""; }).catch(handleErr("Could not add viewer"));
+    }));
+    vw.appendChild(chips);
+    card.appendChild(vw);
+    al.appendChild(card);
+  });
 }
 
-// ============================================================
-//  APPEARANCE (teacher's own bg, stored on teacher profile)
-// ============================================================
-function wireAppearance() {
-  $("apperanceBtn").onclick = function () {
-    renderSwatches("apSwatches", "apBg");
-    $("apBg").value = teacherProfile.bg || "";
-    $("appearancePanel").classList.remove("hidden");
-    $("appearancePanel").scrollIntoView({ behavior: "smooth" });
-  };
-  $("apCancel").onclick = function () { $("appearancePanel").classList.add("hidden"); };
-  $("apSave").onclick = function () {
-    var bg = $("apBg").value.trim();
-    teacherRef.set({ bg: bg }, { merge: true }).then(function () {
-      teacherProfile.bg = bg;
-      applyBackground(bg);
-      $("appearancePanel").classList.add("hidden");
+function fillStudentSelects(){
+  var approved=studentsCache.filter(function(s){return s.status==="approved";});
+  [["qStudentFilter",true],["logStudentFilter",true],["fbFilter",true],["fbStudent",false]].forEach(function(pair){
+    var sel=$(pair[0]); if(!sel) return;
+    var cur=sel.value;
+    sel.innerHTML = pair[1] ? '<option value="">All students</option>' : "";
+    approved.forEach(function(s){
+      sel.innerHTML+='<option value="'+s.uid+'">'+esc(s.name||s.email)+'</option>';
     });
-  };
-}
-
-// ============================================================
-//  STUDENTS  (approve / remove / view-as)
-// ============================================================
-function loadStudents() {
-  studentsCol.orderBy("createdAt", "desc").onSnapshot(function (snap) {
-    studentsCache = [];
-    snap.forEach(function (d) { studentsCache.push(Object.assign({ uid: d.id }, d.data())); });
-    renderStudents();
-    fillStudentDropdowns();
-  }, function () {
-    $("pendingList").innerHTML = '<p class="muted">Could not load students (check Firestore rules).</p>';
+    if(cur) sel.value=cur;
   });
 }
 
-function renderStudents() {
-  var pending = studentsCache.filter(function (s) { return s.status !== "approved"; });
-  var approved = studentsCache.filter(function (s) { return s.status === "approved"; });
-
-  $("pendingList").innerHTML = pending.length ? "" : '<p class="muted">Nobody waiting.</p>';
-  pending.forEach(function (s) {
-    var el = document.createElement("div");
-    el.className = "row";
-    el.innerHTML =
-      '<div class="left"><span class="avatar">' + avatarInner(s) + '</span> <strong>' + esc(s.email) + '</strong></div>';
-    var ap = mkBtn("Approve", "primary", function () { setStatus(s.uid, "approved"); });
-    var rm = mkBtn("Remove", "", function () { if (confirm("Remove " + s.email + "?")) removeStudent(s.uid); });
-    el.appendChild(ap); el.appendChild(rm);
-    $("pendingList").appendChild(el);
-  });
-
-  $("approvedList").innerHTML = approved.length ? "" : '<p class="muted">No approved students yet.</p>';
-  approved.forEach(function (s) {
-    var el = document.createElement("div");
-    el.className = "row";
-    el.innerHTML =
-      '<div class="left"><span class="avatar">' + avatarInner(s) + '</span> <strong>' + esc(s.name || s.email) +
-      '</strong> <span class="muted">(' + esc(s.email) + ')</span> <span class="pill">active</span></div>';
-    var view = mkBtn("👁 View as", "", function () { window.location.href = "student.html?as=" + s.uid; });
-    var rm = mkBtn("Remove access", "", function () { if (confirm("Remove access for " + (s.name||s.email) + "?")) setStatus(s.uid, "pending"); });
-    el.appendChild(view); el.appendChild(rm);
-    $("approvedList").appendChild(el);
+// ---------------- worksheets ----------------
+function loadWorksheets(){
+  wsCol.orderBy("order","asc").onSnapshot(function(snap){
+    worksheetsCache=[];
+    snap.forEach(function(d){ worksheetsCache.push(Object.assign({id:d.id},d.data())); });
+    collectTags(); renderWorksheets(); renderGoldSettings();
+  },function(e){ $("wsList").innerHTML='<p class="muted">Could not load: '+esc(e.message)+'</p>'; });
+}
+function collectTags(){
+  var set={};
+  worksheetsCache.forEach(function(w){ (w.tags||[]).forEach(function(t){ set[t]=1; }); });
+  allTags=Object.keys(set).sort();
+  var c=$("tagChips"); c.innerHTML="";
+  allTags.forEach(function(t){
+    var chip=el("span","tag"+(activeTag===t?" on":""),esc(t));
+    chip.onclick=function(){ activeTag=(activeTag===t?"":t); $("tagFilter").value=activeTag; collectTags(); renderWorksheets(); };
+    c.appendChild(chip);
   });
 }
-
-function avatarInner(s) {
-  if (s.photo) return '<img src="' + esc(s.photo) + '" alt="">';
-  return esc((s.name || s.email || "?").charAt(0).toUpperCase());
+function wsMatches(w){
+  var q=($("tagFilter").value||"").trim().toLowerCase();
+  if(!q) return true;
+  if((w.title||"").toLowerCase().indexOf(q)>=0) return true;
+  return (w.tags||[]).some(function(t){ return t.toLowerCase().indexOf(q)>=0; });
 }
-function setStatus(uid, status) { studentsCol.doc(uid).set({ status: status }, { merge: true }); }
-function removeStudent(uid) { studentsCol.doc(uid).delete(); }
-
-function fillStudentDropdowns() {
-  var approved = studentsCache.filter(function (s) { return s.status === "approved"; });
-  var sel = $("assignStudent");
-  var cur = sel.value;
-  sel.innerHTML = '<option value="">— pick a student —</option>';
-  approved.forEach(function (s) {
-    sel.innerHTML += '<option value="' + s.uid + '">' + esc(s.name || s.email) + ' (' + esc(s.email) + ')</option>';
-  });
-  if (cur) sel.value = cur;
-
-  var af = $("ansStuFilter");
-  var acur = af.value;
-  af.innerHTML = '<option value="">All students</option>';
-  approved.forEach(function (s) { af.innerHTML += '<option value="' + s.uid + '">' + esc(s.name || s.email) + '</option>'; });
-  if (acur) af.value = acur;
-}
-
-// ============================================================
-//  WORKSHEETS  (create / rename / edit / delete / import / export)
-// ============================================================
-function loadWorksheets() {
-  wsCol.orderBy("order", "asc").onSnapshot(function (snap) {
-    worksheetsCache = [];
-    snap.forEach(function (d) { worksheetsCache.push(Object.assign({ id: d.id }, d.data())); });
-    renderWorksheets();
-    fillWorksheetDropdowns();
-  }, function () {
-    $("wsList").innerHTML = '<p class="muted">Could not load worksheets (check Firestore rules).</p>';
-  });
-}
-
-function renderWorksheets() {
-  var box = $("wsList");
-  box.innerHTML = worksheetsCache.length ? "" : '<p class="muted">No worksheets yet. Create one above.</p>';
-  worksheetsCache.forEach(function (w) {
-    var el = document.createElement("div");
-    el.className = "row";
-    var qn = (w.questions || []).length;
-    el.innerHTML = '<div class="left"><strong>' + esc(w.title) + '</strong> <span class="muted">· ' + qn + ' question' + (qn===1?"":"s") + '</span></div>';
-    el.appendChild(mkBtn("Edit", "", function () { window.location.href = "editor.html?id=" + w.id; }));
-    el.appendChild(mkBtn("Rename", "", function () { renameWs(w); }));
-    el.appendChild(mkBtn("Delete", "", function () { if (confirm('Delete "' + w.title + '"? This cannot be undone.')) wsCol.doc(w.id).delete(); }));
-    box.appendChild(el);
-  });
-}
-
-function renameWs(w) {
-  var t = prompt("New title:", w.title);
-  if (t && t.trim()) wsCol.doc(w.id).set({ title: t.trim() }, { merge: true });
-}
-
-function wireWorksheetTab() {
-  $("createWsBtn").onclick = function () {
-    var t = $("newWsTitle").value.trim();
-    if (!t) { alert("Give the worksheet a title first."); return; }
-    var order = worksheetsCache.length;
-    wsCol.add({
-      title: t, slideshow: "", instructions: "", allowPhotos: true,
-      questions: [], order: order,
-      createdAt: firebase.firestore.FieldValue.serverTimestamp()
-    }).then(function (ref) { window.location.href = "editor.html?id=" + ref.id; });
-  };
-
-  $("exportWsBtn").onclick = function () {
-    downloadJSON({ type: "worksheets", worksheets: worksheetsCache }, "worksheets.json");
-  };
-
-  $("importWsBtn").onclick = function () { $("importWsFile").click(); };
-  $("importWsFile").onchange = function () {
-    var f = $("importWsFile").files[0]; if (!f) return;
-    var reader = new FileReader();
-    reader.onload = function (e) {
-      try {
-        var data = JSON.parse(e.target.result);
-        var list = data.worksheets || (Array.isArray(data) ? data : []);
-        if (!list.length) { alert("No worksheets found in that file."); return; }
-        var batch = db.batch();
-        list.forEach(function (w, i) {
-          var ref = wsCol.doc();
-          batch.set(ref, {
-            title: w.title || "Imported worksheet",
-            slideshow: w.slideshow || "",
-            instructions: w.instructions || "",
-            allowPhotos: w.allowPhotos !== false,
-            questions: w.questions || [],
-            order: worksheetsCache.length + i,
-            createdAt: firebase.firestore.FieldValue.serverTimestamp()
-          });
-        });
-        batch.commit().then(function () { alert("Imported " + list.length + " worksheet(s)."); });
-      } catch (err) { alert("Could not read that file: " + err.message); }
+function renderWorksheets(){
+  var box=$("wsList"); box.innerHTML="";
+  var shown=0;
+  worksheetsCache.forEach(function(w,idx){
+    if(!wsMatches(w)) return;
+    shown++;
+    var r=el("div","row");
+    var left=el("div","left");
+    var qn=(w.questions||[]).length;
+    left.innerHTML='<strong>'+(idx+1)+'. '+esc(w.title)+'</strong> <span class="muted">· '+qn+' Q</span> '+
+      (w.gold?'<span class="gold"><span class="dot"></span>'+w.gold+'</span>':'')+'<br>';
+    (w.tags||[]).forEach(function(t){
+      var chip=el("span","tag",esc(t)+" ✕");
+      chip.onclick=function(){
+        var next=(w.tags||[]).filter(function(x){return x!==t;});
+        wsCol.doc(w.id).set({tags:next},{merge:true});
+      };
+      left.appendChild(chip);
+    });
+    var ti=document.createElement("input");
+    ti.type="text"; ti.placeholder="+ tag"; ti.style.cssText="width:80px;font-size:12px;padding:2px 4px;";
+    ti.onkeydown=function(e){
+      if(e.key!=="Enter") return;
+      var t=(ti.value||"").trim().toLowerCase(); if(!t) return;
+      var next=(w.tags||[]).slice(); if(next.indexOf(t)<0) next.push(t);
+      wsCol.doc(w.id).set({tags:next},{merge:true}).then(function(){ ti.value=""; });
     };
+    left.appendChild(ti);
+    r.appendChild(left);
+
+    r.appendChild(mkBtn("▲","arrow",function(){ moveWs(idx,-1); }));
+    r.appendChild(mkBtn("▼","arrow",function(){ moveWs(idx,1); }));
+    r.appendChild(mkBtn("Edit","",function(){ location.href="editor.html?id="+w.id; }));
+    r.appendChild(mkBtn("Assign","",function(){ location.href="assign.html?ws="+w.id; }));
+    r.appendChild(mkBtn("Generate ➕","",function(){ location.href="generator.html?src="+w.id; }));
+    r.appendChild(mkBtn("Delete","",function(){
+      if(confirm('Delete "'+w.title+'"? This cannot be undone.')) wsCol.doc(w.id).delete();
+    }));
+    box.appendChild(r);
+  });
+  if(!shown) box.innerHTML='<p class="muted">No worksheets match. <button id="cf2">clear filter</button></p>';
+  if($("cf2")) $("cf2").onclick=function(){ $("tagFilter").value=""; activeTag=""; collectTags(); renderWorksheets(); };
+}
+function moveWs(i,dir){
+  var j=i+dir; if(j<0||j>=worksheetsCache.length) return;
+  var a=worksheetsCache[i], b=worksheetsCache[j];
+  var batch=db.batch();
+  batch.set(wsCol.doc(a.id),{order:j},{merge:true});
+  batch.set(wsCol.doc(b.id),{order:i},{merge:true});
+  batch.commit().catch(handleErr("Could not reorder"));
+}
+
+function wireWorksheets(){
+  $("createWsBtn").onclick=function(){
+    var t=$("newWsTitle").value.trim();
+    if(!t){ showErr("Give the worksheet a title first."); return; }
+    wsCol.add({title:t,tags:[],gold:0,slideshow:"",instructions:"",instructionEmbed:"",
+      allowPhotos:true,questions:[],order:worksheetsCache.length,
+      createdAt:firebase.firestore.FieldValue.serverTimestamp()})
+      .then(function(ref){ location.href="editor.html?id="+ref.id; })
+      .catch(handleErr("Could not create"));
+  };
+  $("tagFilter").oninput=function(){ renderWorksheets(); };
+  $("clearFilter").onclick=function(){ $("tagFilter").value=""; activeTag=""; collectTags(); renderWorksheets(); };
+
+  $("exportWsCsvBtn").onclick=function(){
+    var rows=[["worksheet","tags","gold","question_label","type","question_text","option_a","option_b","correct","embed_url"]];
+    worksheetsCache.forEach(function(w){
+      (w.questions||[]).forEach(function(q,i){
+        var o=q.options||[];
+        rows.push([w.title,(w.tags||[]).join(" "),w.gold||0,q.label||("Question "+(i+1)),
+          q.type,q.text||"",o[0]||"",o[1]||"",
+          (q.correct===0?"a":(q.correct===1?"b":"")),q.embed||""]);
+      });
+      if(!(w.questions||[]).length) rows.push([w.title,(w.tags||[]).join(" "),w.gold||0,"","","","","","",""]);
+    });
+    downloadCSV(rows,"worksheets.csv");
+  };
+  $("templateBtn").onclick=function(){
+    downloadCSV([
+      ["worksheet","tags","gold","question_label","type","question_text","option_a","option_b","correct","embed_url"],
+      ["Sample Vocab","vocab SAT","10","Question 1","typed","Write a sentence with a blank.","","","",""],
+      ["Sample Vocab","vocab SAT","10","Question 2","mc","Which word fits?","dog","refrigerator","a",""],
+      ["Sample Vocab","vocab SAT","10","Question 3","check","Did you read chapter 4?","","","",""],
+      ["Sample Vocab","vocab SAT","10","Question 4","draw","Draw a mind map.","","","",""],
+      ["Sample Vocab","vocab SAT","10","Question 5","task","Watch this video.","","","","https://youtu.be/xxxx"]
+    ],"worksheet-template.csv");
+  };
+  $("importCsvBtn").onclick=function(){ $("importCsvFile").click(); };
+  $("importCsvFile").onchange=function(){
+    var f=$("importCsvFile").files[0]; if(!f) return;
+    var reader=new FileReader();
+    reader.onload=function(e){ importCSV(e.target.result); };
     reader.readAsText(f);
   };
 }
 
-function fillWorksheetDropdowns() {
-  var af = $("ansWsFilter"); var cur = af.value;
-  af.innerHTML = '<option value="">All worksheets</option>';
-  worksheetsCache.forEach(function (w) { af.innerHTML += '<option value="' + w.id + '">' + esc(w.title) + '</option>'; });
-  if (cur) af.value = cur;
+function parseCSV(text){
+  var rows=[],row=[],cur="",q=false;
+  text=text.replace(/^\ufeff/,"");
+  for(var i=0;i<text.length;i++){
+    var c=text[i];
+    if(q){
+      if(c==='"'&&text[i+1]==='"'){cur+='"';i++;}
+      else if(c==='"'){q=false;}
+      else cur+=c;
+    } else {
+      if(c==='"')q=true;
+      else if(c===","){row.push(cur);cur="";}
+      else if(c==="\n"){row.push(cur);rows.push(row);row=[];cur="";}
+      else if(c!=="\r")cur+=c;
+    }
+  }
+  if(cur!==""||row.length){row.push(cur);rows.push(row);}
+  return rows.filter(function(r){return r.some(function(c){return String(c).trim()!=="";});});
 }
 
-// ============================================================
-//  ASSIGN
-// ============================================================
-function wireAssignTab() {
-  $("assignStudent").onchange = function () {
-    var uid = $("assignStudent").value;
-    if (!uid) { $("assignArea").innerHTML = '<p class="muted">Pick a student above.</p>'; return; }
-    renderAssignments(uid);
+function importCSV(text){
+  try{
+    var rows=parseCSV(text);
+    if(rows.length<2){ showErr("That CSV looks empty."); return; }
+    var head=rows[0].map(function(h){return h.trim().toLowerCase();});
+    function col(name){ return head.indexOf(name); }
+    var groups={};
+    rows.slice(1).forEach(function(r){
+      var title=(r[col("worksheet")]||"").trim(); if(!title) return;
+      if(!groups[title]) groups[title]={title:title,tags:[],gold:0,questions:[]};
+      var g=groups[title];
+      var tg=(r[col("tags")]||"").trim();
+      if(tg) g.tags=tg.split(/\s+/).map(function(x){return x.toLowerCase();});
+      var gd=Number(r[col("gold")]||0); if(gd) g.gold=gd;
+      var qt=(r[col("question_text")]||"").trim();
+      var type=(r[col("type")]||"typed").trim().toLowerCase();
+      if(!qt && type!=="draw") return;
+      var q={ label:(r[col("question_label")]||"").trim(), type:type, text:qt };
+      if(type==="mc"){
+        q.options=[(r[col("option_a")]||"").trim(),(r[col("option_b")]||"").trim()].filter(Boolean);
+        var c=(r[col("correct")]||"").trim().toLowerCase();
+        q.correct = c==="a"?0:(c==="b"?1:-1);
+      }
+      var em=(r[col("embed_url")]||"").trim();
+      if(em){ q.embed=em; q.embedMode="open"; }
+      g.questions.push(q);
+    });
+    var list=Object.keys(groups);
+    if(!list.length){ showErr("No worksheets found in that CSV."); return; }
+    var batch=db.batch();
+    list.forEach(function(k,i){
+      var g=groups[k];
+      batch.set(wsCol.doc(),{
+        title:g.title,tags:g.tags,gold:g.gold,questions:g.questions,
+        slideshow:"",instructions:"",instructionEmbed:"",allowPhotos:true,
+        order:worksheetsCache.length+i,
+        createdAt:firebase.firestore.FieldValue.serverTimestamp()
+      });
+    });
+    batch.commit().then(function(){ alert("Imported "+list.length+" worksheet(s)."); })
+      .catch(handleErr("Import failed"));
+  }catch(err){ showErr("Could not read that CSV: "+err.message); }
+}
+
+// ---------------- gold ----------------
+function renderGoldSettings(){
+  var box=$("goldSetList"); box.innerHTML="";
+  if(!worksheetsCache.length){ box.innerHTML='<p class="muted">No worksheets yet.</p>'; return; }
+  worksheetsCache.forEach(function(w){
+    var r=el("div","row");
+    r.appendChild(el("div","left","<strong>"+esc(w.title)+"</strong>"));
+    r.appendChild(el("span","muted","per submit:"));
+    var i=document.createElement("input"); i.type="number"; i.min="0"; i.value=w.gold||0; i.style.width="80px";
+    r.appendChild(i);
+    var m=el("span","muted");
+    r.appendChild(mkBtn("Save","",function(){
+      wsCol.doc(w.id).set({gold:Number(i.value)||0},{merge:true})
+        .then(function(){ flash(m,"✓"); }).catch(handleErr("Could not save"));
+    }));
+    r.appendChild(m);
+    box.appendChild(r);
+  });
+}
+function wireGold(){
+  function setTeacherGold(v){
+    v=Math.max(0,Math.min(99999,Number(v)||0));
+    teacherRef.set({gold:v},{merge:true}).then(function(){
+      teacherProfile.gold=v;
+      $("myGold").textContent=v; $("myGold2").textContent=v;
+      $("gameGold").textContent=v; $("teacherGoldInput").value=v;
+    }).catch(handleErr("Could not set gold"));
+  }
+  $("setTeacherGold").onclick=function(){ setTeacherGold($("teacherGoldInput").value); };
+  $("maxGold").onclick=function(){ setTeacherGold(99999); };
+  $("zeroGold").onclick=function(){ setTeacherGold(0); };
+  document.querySelectorAll("[data-add]").forEach(function(b){
+    b.onclick=function(){ setTeacherGold((teacherProfile.gold||0)+Number(b.getAttribute("data-add"))); };
+  });
+  $("logRefresh").onclick=loadGoldLog;
+  $("logStudentFilter").onchange=loadGoldLog;
+  $("logSort").onchange=loadGoldLog;
+  $("logCsv").onclick=function(){
+    loadGoldLog(function(rows){
+      var out=[["When (PT)","Student","What","Gold"]];
+      rows.forEach(function(r){ out.push([fmtTime(r.at),r.studentName,r.what,r.amount]); });
+      downloadCSV(out,"gold-log.csv");
+    });
   };
+  document.querySelector('.tab[data-panel="goldlog"]').addEventListener("click",loadGoldLog);
 }
-
-function renderAssignments(uid) {
-  var area = $("assignArea");
-  area.innerHTML = '<p class="muted">Loading…</p>';
-  studentsCol.doc(uid).collection("assignments").get().then(function (snap) {
-    var assigned = [];
-    snap.forEach(function (d) { assigned.push(Object.assign({ wsId: d.id }, d.data())); });
-    assigned.sort(function (a, b) { return (a.order||0) - (b.order||0); });
-
-    area.innerHTML = "";
-    var box = document.createElement("div");
-    box.className = "card fill";
-
-    if (!assigned.length) {
-      box.innerHTML = '<p class="muted">No worksheets assigned yet.</p>';
-    } else {
-      assigned.forEach(function (a, idx) {
-        var w = worksheetsCache.filter(function (x) { return x.id === a.wsId; })[0];
-        var title = w ? w.title : "(deleted worksheet)";
-        var row = document.createElement("div");
-        row.className = "row";
-        var doneTxt = a.done ? '<span class="pill">DONE ✓ ' + esc(fmtTime(a.doneAt)) + '</span>' : '<span class="muted">not done</span>';
-        row.innerHTML = '<div class="left"><strong>' + esc(title) + '</strong> ' + doneTxt + '</div>';
-        var up = mkBtn("▲", "arrow", function () { moveAssignment(uid, assigned, idx, -1); });
-        var dn = mkBtn("▼", "arrow", function () { moveAssignment(uid, assigned, idx, 1); });
-        if (a.done) row.appendChild(mkBtn("Reset done", "", function () {
-          studentsCol.doc(uid).collection("assignments").doc(a.wsId).set({ done: false, doneAt: null }, { merge: true }).then(function(){ renderAssignments(uid); });
-        }));
-        row.appendChild(up); row.appendChild(dn);
-        row.appendChild(mkBtn("Unassign", "", function () {
-          studentsCol.doc(uid).collection("assignments").doc(a.wsId).delete().then(function () { renderAssignments(uid); });
-        }));
-        box.appendChild(row);
-      });
-    }
-
-    // add-worksheet control
-    var unassigned = worksheetsCache.filter(function (w) {
-      return !assigned.some(function (a) { return a.wsId === w.id; });
+function loadGoldLog(cb){
+  goldLogCol.orderBy("at","desc").limit(300).get().then(function(snap){
+    var rows=[]; snap.forEach(function(d){ rows.push(d.data()); });
+    var f=$("logStudentFilter").value;
+    if(f) rows=rows.filter(function(r){return r.uid===f;});
+    var sort=$("logSort").value;
+    if(sort==="oldest") rows.reverse();
+    if(sort==="biggest") rows.sort(function(a,b){return (b.amount||0)-(a.amount||0);});
+    if(typeof cb==="function"){ cb(rows); return; }
+    var t=el("table");
+    t.innerHTML="<tr><th>When (PT)</th><th>Student</th><th>What</th><th>Gold</th></tr>";
+    rows.forEach(function(r){
+      var tr=el("tr");
+      tr.innerHTML="<td>"+esc(fmtTime(r.at))+"</td><td>"+esc(r.studentName||"")+"</td><td>"+
+        esc(r.what||"")+"</td><td>"+(r.amount>0?"+":"")+esc(r.amount)+"</td>";
+      t.appendChild(tr);
     });
-    var addWrap = document.createElement("div");
-    addWrap.style.cssText = "display:flex; gap:8px; margin-top:12px; flex-wrap:wrap;";
-    var sel = document.createElement("select");
-    sel.style.flex = "1";
-    sel.innerHTML = '<option value="">+ Add a worksheet…</option>' +
-      unassigned.map(function (w) { return '<option value="' + w.id + '">' + esc(w.title) + '</option>'; }).join("");
-    var addBtn = mkBtn("Add", "primary", function () {
-      if (!sel.value) return;
-      studentsCol.doc(uid).collection("assignments").doc(sel.value).set({
-        order: assigned.length, done: false, doneAt: null
-      }).then(function () { renderAssignments(uid); });
-    });
-    addWrap.appendChild(sel); addWrap.appendChild(addBtn);
-    box.appendChild(addWrap);
-    area.appendChild(box);
-  });
+    $("logTable").innerHTML=""; 
+    $("logTable").appendChild(rows.length?t:el("p","muted","No gold awarded yet."));
+  }).catch(handleErr("Could not load log"));
 }
 
-function moveAssignment(uid, assigned, idx, dir) {
-  var j = idx + dir;
-  if (j < 0 || j >= assigned.length) return;
-  var a = assigned[idx], b = assigned[j];
-  var batch = db.batch();
-  batch.set(studentsCol.doc(uid).collection("assignments").doc(a.wsId), { order: j }, { merge: true });
-  batch.set(studentsCol.doc(uid).collection("assignments").doc(b.wsId), { order: idx }, { merge: true });
-  batch.commit().then(function () { renderAssignments(uid); });
+// ---------------- questions ----------------
+function wireQuestions(){
+  $("qRefresh").onclick=loadAllQuestions;
+  $("qStudentFilter").onchange=loadAllQuestions;
+  $("qSort").onchange=loadAllQuestions;
+  document.querySelector('.tab[data-panel="questions"]').addEventListener("click",loadAllQuestions);
+  setTimeout(loadAllQuestions,1500);
 }
-
-// ============================================================
-//  ANSWERS
-// ============================================================
-function wireAnswersTab() {
-  $("ansRefresh").onclick = loadAnswers;
-}
-
-function loadAnswers() {
-  var wsFilter = $("ansWsFilter").value;
-  var stuFilter = $("ansStuFilter").value;
-  var list = $("answersList");
-  list.innerHTML = '<p class="muted">Loading…</p>';
-
-  var students = studentsCache.filter(function (s) {
-    return s.status === "approved" && (!stuFilter || s.uid === stuFilter);
+function loadAllQuestions(){
+  var filter=$("qStudentFilter").value;
+  var targets=studentsCache.filter(function(s){
+    return s.status==="approved" && (!filter||s.uid===filter);
   });
-  var worksheets = worksheetsCache.filter(function (w) { return !wsFilter || w.id === wsFilter; });
-
-  var tasks = [];
-  students.forEach(function (s) {
-    worksheets.forEach(function (w) {
-      tasks.push(
-        studentsCol.doc(s.uid).collection("answers").doc(w.id).collection("attempts")
-          .orderBy("createdAt", "asc").get().then(function (snap) {
-            var attempts = [];
-            snap.forEach(function (d) { attempts.push(Object.assign({ id: d.id }, d.data())); });
-            return { student: s, ws: w, attempts: attempts };
-          })
-      );
-    });
-  });
-
-  Promise.all(tasks).then(function (results) {
-    results = results.filter(function (r) { return r.attempts.length; });
-    if (!results.length) { list.innerHTML = '<p class="muted">No submitted attempts match those filters.</p>'; return; }
-    list.innerHTML = "";
-    results.forEach(function (r) {
-      r.attempts.forEach(function (att) {
-        list.appendChild(renderAttemptCard(r.student, r.ws, att));
-      });
-    });
+  Promise.all(targets.map(function(s){
+    return studentsCol.doc(s.uid).collection("questions").orderBy("createdAt","desc").limit(50).get()
+      .then(function(snap){
+        var out=[]; snap.forEach(function(d){ out.push(Object.assign({id:d.id,student:s},d.data())); });
+        return out;
+      }).catch(function(){return [];});
+  })).then(function(lists){
+    var all=[].concat.apply([],lists);
+    var unanswered=all.filter(function(q){return !q.answered;}).length;
+    var b=$("qBadge");
+    if(unanswered){ b.textContent=unanswered; b.classList.remove("hidden"); } else b.classList.add("hidden");
+    if($("qSort").value==="unanswered")
+      all.sort(function(a,b2){ return (a.answered?1:0)-(b2.answered?1:0); });
+    var box=$("questionList"); box.innerHTML="";
+    if(!all.length){ box.innerHTML='<p class="muted">No questions yet.</p>'; return; }
+    all.forEach(function(q){ box.appendChild(renderQuestion(q)); });
   });
 }
-
-function renderAttemptCard(student, ws, att) {
-  var card = document.createElement("div");
-  card.className = "card";
-  var head = document.createElement("div");
-  head.className = "muted";
-  head.style.marginBottom = "8px";
-  head.innerHTML = '<span class="avatar" style="width:20px;height:20px;font-size:0.7rem;">' + avatarInner(student) +
-    '</span> <strong>' + esc(student.name || student.email) + '</strong> · ' + esc(ws.title) + ' · ';
-  var nameInput = document.createElement("input");
-  nameInput.type = "text"; nameInput.value = att.name || "Attempt";
-  nameInput.style.width = "120px";
-  head.appendChild(nameInput);
-  card.appendChild(head);
-
-  var responses = att.responses || {};
-  var comments = att.comments || {};
-  (ws.questions || []).forEach(function (q, i) {
-    var qEl = document.createElement("div");
-    qEl.style.marginBottom = "10px";
-    var label = q.label || ("Question " + (i + 1));
-    qEl.innerHTML = '<p style="font-weight:bold;margin:0 0 2px;">' + esc(label) + '. ' + esc(q.text || "") + '</p>';
-    if (q.type !== "task") {
-      var ta = document.createElement("textarea");
-      ta.value = responses[i] != null ? responses[i] : "";
-      ta.style.minHeight = "40px";
-      ta.dataset.qi = i;
-      ta.className = "resp";
-      qEl.appendChild(ta);
-    } else {
-      qEl.innerHTML += '<p class="muted">(task — nothing to submit)</p>';
-    }
-    var cm = document.createElement("input");
-    cm.type = "text"; cm.placeholder = "Teacher comment (student sees this)";
-    cm.value = comments[i] || "";
-    cm.dataset.qi = i; cm.className = "cmt";
-    cm.style.marginTop = "4px";
-    qEl.appendChild(cm);
-    card.appendChild(qEl);
-  });
-
-  if (att.photo) {
-    var ph = document.createElement("p");
-    ph.className = "muted";
-    ph.innerHTML = '📷 photo attached:';
-    var img = document.createElement("img");
-    img.src = att.photo; img.style.cssText = "display:block;max-width:220px;border:1px solid #000;margin-top:4px;";
-    card.appendChild(ph); card.appendChild(img);
+function renderQuestion(q){
+  var card=el("div","card");
+  if(!q.answered) card.style.background="#fff8f8";
+  card.innerHTML='<strong>'+esc(q.student.name||q.student.email)+'</strong> <span class="muted">— '+
+    esc(fmtTime(q.createdAt))+'</span> '+(q.answered?'<span class="muted">· answered</span>':'<span class="badge">new</span>');
+  var p=el("p"); p.style.margin="5px 0"; p.textContent=q.text; card.appendChild(p);
+  if(q.answered && q.reply){
+    card.appendChild(el("div","comment","<strong>"+esc(teacherProfile.name||"Jim")+" says…</strong> "+esc(q.reply)));
   }
-
-  var mark = document.createElement("div");
-  mark.style.margin = "8px 0";
-  mark.innerHTML = 'Mark: ';
-  var ngBtn = mkBtn("Try again ✗", att.status === "ng" ? "ng" : "", function () { setMark("ng"); });
-  var goodBtn = mkBtn("Good job ✓", att.status === "good" ? "good" : "", function () { setMark("good"); });
-  mark.appendChild(ngBtn); mark.appendChild(goodBtn);
-  card.appendChild(mark);
-
-  var curStatus = att.status || "";
-  function setMark(v) {
-    curStatus = v;
-    ngBtn.className = v === "ng" ? "ng" : "";
-    goodBtn.className = v === "good" ? "good" : "";
-  }
-
-  var saveBtn = mkBtn("Save", "primary", function () {
-    var newResp = Object.assign({}, responses);
-    card.querySelectorAll(".resp").forEach(function (ta) { newResp[ta.dataset.qi] = ta.value; });
-    var newCmt = {};
-    card.querySelectorAll(".cmt").forEach(function (c) { if (c.value.trim()) newCmt[c.dataset.qi] = c.value.trim(); });
-    studentsCol.doc(student.uid).collection("answers").doc(ws.id).collection("attempts").doc(att.id)
-      .set({ name: nameInput.value.trim() || "Attempt", responses: newResp, comments: newCmt, status: curStatus }, { merge: true })
-      .then(function () { saveBtn.textContent = "Saved ✓"; setTimeout(function(){ saveBtn.textContent = "Save"; }, 1500); });
-  });
-  var delBtn = mkBtn("Delete attempt", "", function () {
-    if (confirm("Delete this attempt?"))
-      studentsCol.doc(student.uid).collection("answers").doc(ws.id).collection("attempts").doc(att.id).delete().then(loadAnswers);
-  });
-  card.appendChild(saveBtn); card.appendChild(delBtn);
+  var inp=document.createElement("input"); inp.type="text";
+  inp.placeholder="Your reply (they'll see it)"; inp.value=q.reply||"";
+  card.appendChild(inp);
+  var bar=el("div"); bar.style.marginTop="6px";
+  bar.appendChild(mkBtn("Reply","primary",function(){
+    studentsCol.doc(q.student.uid).collection("questions").doc(q.id)
+      .set({reply:inp.value.trim(),answered:true},{merge:true})
+      .then(loadAllQuestions).catch(handleErr("Could not reply"));
+  }));
+  bar.appendChild(mkBtn("Mark handled","",function(){
+    studentsCol.doc(q.student.uid).collection("questions").doc(q.id)
+      .set({answered:true},{merge:true}).then(loadAllQuestions);
+  }));
+  bar.appendChild(mkBtn("Delete","",function(){
+    if(confirm("Delete this question?"))
+      studentsCol.doc(q.student.uid).collection("questions").doc(q.id).delete().then(loadAllQuestions);
+  }));
+  card.appendChild(bar);
   return card;
 }
 
-// ============================================================
-//  STUDENT BOXES
-// ============================================================
-function loadBoxes() {
-  boxesCol.orderBy("order", "asc").onSnapshot(function (snap) {
-    var boxes = [];
-    snap.forEach(function (d) { boxes.push(Object.assign({ id: d.id }, d.data())); });
-    renderBoxes(boxes);
-  }, function () { $("boxesList").innerHTML = '<p class="muted">Could not load boxes.</p>'; });
+// ---------------- student boxes ----------------
+function loadBoxes(){
+  boxesCol.orderBy("order","asc").onSnapshot(function(snap){
+    var list=[]; snap.forEach(function(d){ list.push(Object.assign({id:d.id},d.data())); });
+    renderBoxes(list);
+  },function(e){ $("boxList").innerHTML='<p class="muted">Could not load boxes.</p>'; });
 }
-
-function wireBoxesTab() {
-  $("createBoxBtn").onclick = function () {
-    var t = $("newBoxTitle").value.trim();
-    if (!t) { alert("Give the box a title."); return; }
-    boxesCol.add({ title: t, text: "", order: Date.now(), audience: "all", students: [], items: [] })
-      .then(function () { $("newBoxTitle").value = ""; });
+function wireBoxes(){
+  $("createBoxBtn").onclick=function(){
+    var t=$("newBoxTitle").value.trim();
+    if(!t){ showErr("Give the box a title."); return; }
+    boxesCol.add({title:t,text:"",order:Date.now(),audience:"some",students:[],items:[]})
+      .then(function(){ $("newBoxTitle").value=""; }).catch(handleErr("Could not create box"));
   };
 }
+function renderBoxes(list){
+  var box=$("boxList"); box.innerHTML = list.length?"":'<p class="muted">No boxes yet.</p>';
+  list.forEach(function(b,idx){
+    var card=el("div","card");
+    var ctrl=el("div"); ctrl.style.cssText="display:flex;gap:6px;align-items:center;margin-bottom:8px;";
+    ctrl.appendChild(mkBtn("▲","arrow",function(){ moveBox(list,idx,-1); }));
+    ctrl.appendChild(mkBtn("▼","arrow",function(){ moveBox(list,idx,1); }));
+    ctrl.appendChild(el("strong",null,"Box: "+esc(b.title)));
+    card.appendChild(ctrl);
 
-function renderBoxes(boxes) {
-  var box = $("boxesList");
-  box.innerHTML = boxes.length ? "" : '<p class="muted">No boxes yet.</p>';
-  boxes.forEach(function (b, idx) {
-    var el = document.createElement("div");
-    el.className = "card";
-    var titleIn = inputEl(b.title, "Box title");
-    var textIn = document.createElement("textarea");
-    textIn.value = b.text || ""; textIn.placeholder = "Text (optional)"; textIn.style.minHeight = "40px";
+    card.appendChild(el("p","muted","Title"));
+    var ti=document.createElement("input"); ti.type="text"; ti.value=b.title||"";
+    card.appendChild(ti);
+    card.appendChild(el("p","muted","Text"));
+    var tx=document.createElement("textarea"); tx.value=b.text||""; tx.style.minHeight="40px";
+    card.appendChild(tx);
 
-    el.innerHTML = '<div style="display:flex;gap:6px;margin-bottom:8px;"></div>';
-    var ctrls = el.firstChild;
-    ctrls.appendChild(mkBtn("▲","arrow", function(){ moveBox(boxes, idx, -1); }));
-    ctrls.appendChild(mkBtn("▼","arrow", function(){ moveBox(boxes, idx, 1); }));
-    var strong = document.createElement("strong"); strong.style.alignSelf="center"; strong.textContent = "Box";
-    ctrls.appendChild(strong);
-
-    el.appendChild(labeled("Title", titleIn));
-    el.appendChild(labeled("Text", textIn));
-
-    // audience
-    var aud = document.createElement("div");
-    aud.style.margin = "6px 0";
-    var audAll = 'audience_' + b.id;
-    aud.innerHTML = 'Show to: ' +
-      '<label><input type="radio" name="' + audAll + '" value="all" ' + (b.audience !== "some" ? "checked" : "") + '> All students</label> ' +
-      '<label><input type="radio" name="' + audAll + '" value="some" ' + (b.audience === "some" ? "checked" : "") + '> Specific</label>';
-    el.appendChild(aud);
-
-    var studentPick = document.createElement("div");
-    studentPick.style.margin = "4px 0";
-    function renderStudentPick() {
-      var isSome = el.querySelector('input[name="' + audAll + '"]:checked').value === "some";
-      studentPick.style.display = isSome ? "block" : "none";
-      if (!isSome) { studentPick.innerHTML = ""; return; }
-      var chosen = b.students || [];
-      studentPick.innerHTML = '<p class="muted" style="margin:2px 0;">Tick who sees it:</p>';
-      studentsCache.filter(function(s){return s.status==="approved";}).forEach(function (s) {
-        var lab = document.createElement("label");
-        lab.style.marginRight = "10px";
-        lab.innerHTML = '<input type="checkbox" value="' + s.uid + '" ' + (chosen.indexOf(s.uid)>=0?"checked":"") + '> ' + esc(s.name||s.email);
-        studentPick.appendChild(lab);
+    card.appendChild(el("p","muted","Items — each a link or an embedded doc:"));
+    var items=(b.items||[]).map(function(x){return Object.assign({},x);});
+    var itemBox=el("div");
+    function drawItems(){
+      itemBox.innerHTML="";
+      items.forEach(function(it,ii){
+        var r=el("div","row"); r.style.padding="5px 8px";
+        var l=document.createElement("input"); l.type="text"; l.value=it.label||""; l.placeholder="Label"; l.style.flex="1";
+        l.oninput=function(){ it.label=l.value; };
+        var u=document.createElement("input"); u.type="text"; u.value=it.url||""; u.placeholder="https://…"; u.style.flex="1";
+        u.oninput=function(){ it.url=u.value; };
+        var m=document.createElement("select"); m.style.width="auto";
+        m.innerHTML='<option value="open">Embed (always open)</option>'+
+                    '<option value="collapsible">Embed (collapsible)</option>'+
+                    '<option value="link">Plain link</option>';
+        m.value=it.mode||"open"; m.onchange=function(){ it.mode=m.value; };
+        r.appendChild(l); r.appendChild(u); r.appendChild(m);
+        r.appendChild(mkBtn("✕","",function(){ items.splice(ii,1); drawItems(); }));
+        itemBox.appendChild(r);
       });
     }
-    aud.querySelectorAll('input[type=radio]').forEach(function(r){ r.onchange = renderStudentPick; });
-    renderStudentPick();
-    el.appendChild(studentPick);
+    drawItems();
+    card.appendChild(itemBox);
+    card.appendChild(mkBtn("+ Add item","",function(){ items.push({label:"",url:"",mode:"open"}); drawItems(); }));
 
-    // items
-    var itemsWrap = document.createElement("div");
-    itemsWrap.innerHTML = '<p class="muted" style="margin:8px 0 2px;">Items — each a link OR embedded doc:</p>';
-    var items = (b.items || []).slice();
-    function renderItems() {
-      itemsWrap.querySelectorAll(".itemrow").forEach(function(n){ n.remove(); });
-      items.forEach(function (it, ii) {
-        var r = document.createElement("div");
-        r.className = "row itemrow"; r.style.padding = "5px 8px";
-        var lab = inputEl(it.label, "Label"); lab.classList.add("il"); lab.dataset.ii = ii; lab.style.flex="1";
-        var url = inputEl(it.url, "https://…"); url.classList.add("iu"); url.dataset.ii = ii; url.style.flex="1";
-        var typ = document.createElement("select"); typ.className="it"; typ.dataset.ii = ii;
-        typ.innerHTML = '<option value="link"' + (it.type!=="embed"?" selected":"") + '>Link</option><option value="embed"' + (it.type==="embed"?" selected":"") + '>Embed doc</option>';
-        r.appendChild(lab); r.appendChild(url); r.appendChild(typ);
-        r.appendChild(mkBtn("✕","", function(){ items.splice(ii,1); renderItems(); }));
-        itemsWrap.appendChild(r);
+    card.appendChild(el("p","muted","Who sees this box?"));
+    var aud=el("div"); aud.style.cssText="display:flex;gap:10px;flex-wrap:wrap;align-items:center;";
+    var nameAll="aud_"+b.id;
+    var rAll=document.createElement("input"); rAll.type="radio"; rAll.name=nameAll; rAll.style.width="auto";
+    rAll.checked=b.audience==="all";
+    var lAll=el("label"); lAll.appendChild(rAll); lAll.appendChild(document.createTextNode(" All students"));
+    var rSome=document.createElement("input"); rSome.type="radio"; rSome.name=nameAll; rSome.style.width="auto";
+    rSome.checked=b.audience!=="all";
+    var lSome=el("label"); lSome.appendChild(rSome); lSome.appendChild(document.createTextNode(" Only these:"));
+    aud.appendChild(lAll); aud.appendChild(lSome);
+    card.appendChild(aud);
+
+    var picks=el("div"); picks.style.cssText="margin-top:5px;";
+    var chosen=(b.students||[]).slice();
+    function drawPicks(){
+      picks.innerHTML="";
+      picks.style.display=rSome.checked?"block":"none";
+      studentsCache.filter(function(s){return s.status==="approved";}).forEach(function(s){
+        var lab=el("label"); lab.style.marginRight="10px";
+        var cb=document.createElement("input"); cb.type="checkbox"; cb.style.width="auto";
+        cb.checked=chosen.indexOf(s.uid)>=0;
+        cb.onchange=function(){
+          if(cb.checked){ if(chosen.indexOf(s.uid)<0) chosen.push(s.uid); }
+          else chosen=chosen.filter(function(x){return x!==s.uid;});
+        };
+        lab.appendChild(cb); lab.appendChild(document.createTextNode(" "+(s.name||s.email)));
+        picks.appendChild(lab);
       });
     }
-    renderItems();
-    var addItem = mkBtn("+ Add item", "", function () {
-      // capture current field values before re-render
-      syncItems();
-      items.push({ label:"", url:"", type:"link" }); renderItems();
-    });
-    itemsWrap.appendChild(addItem);
-    el.appendChild(itemsWrap);
+    rAll.onchange=drawPicks; rSome.onchange=drawPicks; drawPicks();
+    card.appendChild(picks);
 
-    function syncItems() {
-      itemsWrap.querySelectorAll(".il").forEach(function(n){ items[n.dataset.ii].label = n.value; });
-      itemsWrap.querySelectorAll(".iu").forEach(function(n){ items[n.dataset.ii].url = n.value; });
-      itemsWrap.querySelectorAll(".it").forEach(function(n){ items[n.dataset.ii].type = n.value; });
-    }
-
-    var actions = document.createElement("div");
-    actions.style.marginTop = "10px";
-    actions.appendChild(mkBtn("Save box", "primary", function () {
-      syncItems();
-      var audience = el.querySelector('input[name="' + audAll + '"]:checked').value;
-      var chosen = [];
-      studentPick.querySelectorAll('input[type=checkbox]:checked').forEach(function(c){ chosen.push(c.value); });
+    var actions=el("div"); actions.style.marginTop="10px";
+    var m2=el("span","muted");
+    actions.appendChild(mkBtn("Save box","primary",function(){
       boxesCol.doc(b.id).set({
-        title: titleIn.value.trim(), text: textIn.value,
-        audience: audience, students: chosen, items: items
-      }, { merge: true }).then(function () {
-        actions.querySelector(".savemsg").textContent = "Saved ✓";
-        setTimeout(function(){ actions.querySelector(".savemsg").textContent=""; }, 1500);
-      });
+        title:ti.value.trim(), text:tx.value,
+        audience:rAll.checked?"all":"some", students:chosen,
+        items:items.filter(function(x){return x.url;})
+      },{merge:true}).then(function(){ flash(m2,"Saved ✓"); }).catch(handleErr("Could not save box"));
     }));
-    actions.appendChild(mkBtn("Delete box", "", function () {
-      if (confirm('Delete box "' + b.title + '"?')) boxesCol.doc(b.id).delete();
+    actions.appendChild(mkBtn("Delete box","",function(){
+      if(confirm('Delete box "'+b.title+'"?')) boxesCol.doc(b.id).delete();
     }));
-    var msg = document.createElement("span"); msg.className="savemsg muted"; msg.style.marginLeft="8px";
-    actions.appendChild(msg);
-    el.appendChild(actions);
-
-    box.appendChild(el);
+    actions.appendChild(m2);
+    card.appendChild(actions);
+    box.appendChild(card);
   });
 }
-
-function moveBox(boxes, idx, dir) {
-  var j = idx + dir; if (j<0 || j>=boxes.length) return;
-  var a = boxes[idx], b = boxes[j];
-  var batch = db.batch();
-  batch.set(boxesCol.doc(a.id), { order: b.order }, { merge: true });
-  batch.set(boxesCol.doc(b.id), { order: a.order }, { merge: true });
+function moveBox(list,i,dir){
+  var j=i+dir; if(j<0||j>=list.length) return;
+  var a=list[i],b=list[j];
+  var batch=db.batch();
+  batch.set(boxesCol.doc(a.id),{order:b.order},{merge:true});
+  batch.set(boxesCol.doc(b.id),{order:a.order},{merge:true});
   batch.commit();
 }
 
-// ============================================================
-//  EXPORT ALL (backup)
-// ============================================================
-function exportAllData() {
-  $("exportAllBtn").textContent = "Gathering…";
-  var out = { type: "essay-espresso-backup", exportedAt: new Date().toISOString(),
-              site: siteSettings, teacher: teacherProfile,
-              worksheets: worksheetsCache, boxes: [], students: [] };
+// ---------------- parent feedback ----------------
+function wireFeedback(){
+  fbEditor=makeRichEditor("");
+  $("fbEditorHolder").appendChild(fbEditor);
 
-  boxesCol.get().then(function (bsnap) {
-    bsnap.forEach(function (d) { out.boxes.push(Object.assign({ id: d.id }, d.data())); });
-    return studentsCol.get();
-  }).then(function (ssnap) {
-    var studentTasks = [];
-    ssnap.forEach(function (sdoc) {
-      var s = Object.assign({ uid: sdoc.id }, sdoc.data());
-      s.assignments = []; s.answers = {};
-      var p = studentsCol.doc(sdoc.id).collection("assignments").get().then(function (asnap) {
-        asnap.forEach(function (a) { s.assignments.push(Object.assign({ wsId: a.id }, a.data())); });
-        // answers per worksheet
-        var ansTasks = worksheetsCache.map(function (w) {
-          return studentsCol.doc(sdoc.id).collection("answers").doc(w.id).collection("attempts").get().then(function (att) {
-            if (!att.empty) {
-              s.answers[w.id] = [];
-              att.forEach(function (x) { s.answers[w.id].push(Object.assign({ id: x.id }, x.data())); });
-            }
+  $("fbInsert").onclick=function(){
+    var id=$("fbTemplate").value; if(!id) return;
+    var t=templatesCache.filter(function(x){return x.id===id;})[0];
+    if(t) fbEditor.setHTML(t.html||"");
+  };
+  $("fbPost").onclick=function(){
+    var uid=$("fbStudent").value;
+    if(!uid){ showErr("Pick a student first."); return; }
+    var s=studentsCache.filter(function(x){return x.uid===uid;})[0]||{};
+    var html=fbEditor.getHTML().trim();
+    if(!html||html==="<br>"){ showErr("Write something first."); return; }
+    feedbackCol.add({uid:uid,studentName:s.name||s.email,html:html,
+      at:firebase.firestore.FieldValue.serverTimestamp()})
+      .then(function(){ fbEditor.setHTML(""); flash($("fbMsg"),"Posted ✓"); loadFeedback(); })
+      .catch(handleErr("Could not post"));
+  };
+  $("createTemplate").onclick=function(){
+    var n=$("newTemplateName").value.trim();
+    if(!n){ showErr("Name the template."); return; }
+    templatesCol.add({name:n,html:"<ul><li>Today, we did…</li><li>Next time, we'll do…</li></ul>"})
+      .then(function(){ $("newTemplateName").value=""; }).catch(handleErr("Could not create template"));
+  };
+  $("fbRefresh").onclick=loadFeedback;
+  $("fbFilter").onchange=loadFeedback;
+  document.querySelector('.tab[data-panel="feedback"]').addEventListener("click",loadFeedback);
+}
+function loadTemplates(){
+  templatesCol.onSnapshot(function(snap){
+    templatesCache=[]; snap.forEach(function(d){ templatesCache.push(Object.assign({id:d.id},d.data())); });
+    var sel=$("fbTemplate"); sel.innerHTML='<option value="">— none —</option>';
+    templatesCache.forEach(function(t){ sel.innerHTML+='<option value="'+t.id+'">'+esc(t.name)+'</option>'; });
+    var box=$("templateList"); box.innerHTML = templatesCache.length?"":'<p class="muted">No templates yet.</p>';
+    templatesCache.forEach(function(t){
+      var card=el("div","card");
+      card.appendChild(el("strong",null,esc(t.name)));
+      var ed=makeRichEditor(t.html||"");
+      card.appendChild(ed);
+      var m=el("span","muted");
+      var bar=el("div"); bar.style.marginTop="6px";
+      bar.appendChild(mkBtn("Save","primary",function(){
+        templatesCol.doc(t.id).set({html:ed.getHTML()},{merge:true})
+          .then(function(){ flash(m,"Saved ✓"); }).catch(handleErr("Could not save"));
+      }));
+      bar.appendChild(mkBtn("Delete","",function(){
+        if(confirm('Delete template "'+t.name+'"?')) templatesCol.doc(t.id).delete();
+      }));
+      bar.appendChild(m);
+      card.appendChild(bar);
+      box.appendChild(card);
+    });
+  },function(){});
+}
+function loadFeedback(){
+  feedbackCol.orderBy("at","desc").limit(100).get().then(function(snap){
+    var rows=[]; snap.forEach(function(d){ rows.push(Object.assign({id:d.id},d.data())); });
+    var f=$("fbFilter").value;
+    if(f) rows=rows.filter(function(r){return r.uid===f;});
+    var box=$("fbList"); box.innerHTML = rows.length?"":'<p class="muted">No notes yet.</p>';
+    rows.forEach(function(r){
+      var card=el("div","card");
+      card.innerHTML='<strong>'+esc(r.studentName||"")+'</strong> <span class="muted">— '+esc(fmtTime(r.at))+'</span>';
+      var body=el("div"); body.innerHTML=r.html||""; body.style.margin="5px 0";
+      card.appendChild(body);
+      card.appendChild(mkBtn("Delete","",function(){
+        if(confirm("Delete this note?")) feedbackCol.doc(r.id).delete().then(loadFeedback);
+      }));
+      box.appendChild(card);
+    });
+  }).catch(handleErr("Could not load notes"));
+}
+
+// ---------------- exports ----------------
+function gatherEverything(){
+  var out={type:"essay-espresso-backup",exportedAt:new Date().toISOString(),
+    site:siteSettings,teacher:teacherProfile,worksheets:worksheetsCache,
+    boxes:[],students:[],goldlog:[],feedback:[]};
+  return boxesCol.get().then(function(s){
+    s.forEach(function(d){ out.boxes.push(Object.assign({id:d.id},d.data())); });
+    return goldLogCol.get();
+  }).then(function(s){
+    s.forEach(function(d){ out.goldlog.push(d.data()); });
+    return feedbackCol.get();
+  }).then(function(s){
+    s.forEach(function(d){ out.feedback.push(d.data()); });
+    return Promise.all(studentsCache.map(function(st){
+      var rec=Object.assign({},st); rec.assignments=[]; rec.answers={}; rec.questions=[];
+      return studentsCol.doc(st.uid).collection("assignments").get().then(function(a){
+        a.forEach(function(d){ rec.assignments.push(Object.assign({wsId:d.id},d.data())); });
+        return studentsCol.doc(st.uid).collection("questions").get();
+      }).then(function(q){
+        q.forEach(function(d){ rec.questions.push(d.data()); });
+        return Promise.all(worksheetsCache.map(function(w){
+          return studentsCol.doc(st.uid).collection("answers").doc(w.id).collection("attempts").get()
+            .then(function(at){
+              if(at.empty) return;
+              rec.answers[w.id]=[];
+              at.forEach(function(d){ rec.answers[w.id].push(Object.assign({id:d.id},d.data())); });
+            });
+        }));
+      }).then(function(){ out.students.push(rec); });
+    }));
+  }).then(function(){ return out; });
+}
+function exportAll(){
+  var b=$("exportAllBtn"); b.textContent="Gathering…";
+  gatherEverything().then(function(out){
+    downloadJSON(out,"essay-espresso-backup-"+new Date().toISOString().slice(0,10)+".json");
+    b.textContent="⬇ Export ALL (JSON)";
+  }).catch(function(e){ showErr("Export failed: "+e.message); b.textContent="⬇ Export ALL (JSON)"; });
+}
+function exportAnswersCSV(){
+  var b=$("exportAnswersCsv"); b.textContent="Gathering…";
+  gatherEverything().then(function(out){
+    var rows=[["Student","Worksheet","Attempt","Question","Answer","Tutor comment","Status","Submitted (PT)"]];
+    out.students.forEach(function(st){
+      Object.keys(st.answers||{}).forEach(function(wid){
+        var w=worksheetsCache.filter(function(x){return x.id===wid;})[0]||{title:wid,questions:[]};
+        st.answers[wid].forEach(function(a){
+          (w.questions||[]).forEach(function(q,i){
+            rows.push([st.name||st.email,w.title,a.name||"",q.label||("Question "+(i+1)),
+              stripHTML((a.responses||{})[i]||""),(a.comments||{})[i]||"",
+              a.status==="good"?"Good job":(a.status==="ng"?"Try again":""),
+              a.submittedAt?fmtTime(a.submittedAt):""]);
           });
         });
-        return Promise.all(ansTasks);
       });
-      studentTasks.push(p.then(function () { out.students.push(s); }));
     });
-    return Promise.all(studentTasks);
-  }).then(function () {
-    downloadJSON(out, "essay-espresso-backup-" + new Date().toISOString().slice(0,10) + ".json");
-    $("exportAllBtn").textContent = "⬇ Export ALL data (backup)";
-  }).catch(function (e) {
-    alert("Export ran into an issue: " + e.message);
-    $("exportAllBtn").textContent = "⬇ Export ALL data (backup)";
-  });
-}
-
-// ============================================================
-//  tiny DOM helpers
-// ============================================================
-function mkBtn(label, cls, onclick) {
-  var b = document.createElement("button");
-  b.textContent = label; if (cls) b.className = cls; b.onclick = onclick;
-  return b;
-}
-function inputEl(val, ph) {
-  var i = document.createElement("input"); i.type = "text";
-  i.value = val || ""; if (ph) i.placeholder = ph; return i;
-}
-function labeled(lbl, node) {
-  var wrap = document.createElement("div"); wrap.style.marginBottom = "6px";
-  var p = document.createElement("p"); p.className = "muted"; p.style.margin = "6px 0 2px"; p.textContent = lbl;
-  wrap.appendChild(p); wrap.appendChild(node); return wrap;
+    downloadCSV(rows,"all-answers.csv");
+    b.textContent="⬇ All answers (CSV)";
+  }).catch(function(e){ showErr("Export failed: "+e.message); b.textContent="⬇ All answers (CSV)"; });
 }

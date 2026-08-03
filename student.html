@@ -7,80 +7,107 @@
 <link rel="stylesheet" href="style.css">
 </head>
 <body>
-
 <div id="runnerTop" class="runner"></div>
+<div id="viewBar" class="viewbar hidden"></div>
 
-<!-- teacher-only bar shown when previewing / viewing-as -->
-<div id="viewBar" class="teacherbar hidden"></div>
-
-<div class="wrap" style="max-width:680px;">
-
+<div class="wrap wrap-narrow">
   <div id="loading" class="spinner">Loading…</div>
+  <div id="err" class="err hidden"></div>
 
-  <!-- PENDING screen -->
+  <!-- PENDING -->
   <div id="pendingScreen" class="hidden">
-    <div class="sitehead"><span id="siteIcon" class="siteicon">icon</span><span id="siteTitle" class="sitetitle">EssayEspresso</span></div>
-    <div class="card" style="margin-top:20px;">
-      <h2 style="margin-top:0;">Thanks for signing in!</h2>
+    <div class="sitehead"><span id="siteIcon" class="siteicon">icon</span><span id="siteTitle" class="sitetitle"></span></div>
+    <div class="card" style="margin-top:16px;">
+      <h2>Thanks for signing in!</h2>
       <p>Your tutor hasn't approved your account yet. Check back shortly, or message your tutor.</p>
       <p class="muted" id="pendingEmail"></p>
       <button id="pendingLogout">Log out</button>
     </div>
   </div>
 
-  <!-- APPROVED dashboard -->
+  <!-- APP -->
   <div id="app" class="hidden">
-    <div class="sitehead"><span id="siteIcon2" class="siteicon">icon</span><span id="siteTitle2" class="sitetitle">EssayEspresso</span></div>
+    <div class="sitehead"><span id="siteIcon2" class="siteicon">icon</span><span id="siteTitle2" class="sitetitle"></span></div>
 
-    <div class="row" style="margin:10px 0 20px;">
-      <div class="left" style="display:flex; align-items:center; gap:10px;">
-        <span id="myAvatar" class="avatar"></span>
-        <div><strong id="myName">Student</strong><br><span class="muted" id="myEmail"></span></div>
+    <!-- profile bar (never collapses) -->
+    <div class="card">
+      <div class="cardhead">
+        <div style="display:flex;align-items:center;gap:9px;">
+          <span id="myAvatar" class="avatar"></span>
+          <div><strong id="myName" style="font-size:16px;"></strong>
+            <span class="gold"><span class="dot"></span><span id="myGold">0</span> gold</span><br>
+            <span class="muted" id="myEmail"></span></div>
+        </div>
+        <div>
+          <button id="gameBtn">Game</button>
+          <button id="profBtn">Profile</button>
+          <button id="apBtn">⚙ Appearance</button>
+          <button id="logoutBtn">Log out</button>
+        </div>
       </div>
-      <button id="appearanceBtn">⚙ Appearance</button>
-      <button id="editProfileBtn">Edit profile</button>
-      <button id="logoutBtn">Log out</button>
     </div>
 
-    <!-- edit profile panel -->
-    <div id="profilePanel" class="card fill hidden">
-      <h2 style="margin-top:0;">Edit profile</h2>
+    <!-- game panel, opens right under profile -->
+    <div id="gamePanel" class="card hidden">
+      <div class="cardhead"><h2>Game</h2><button id="gameClose">Close ▴</button></div>
+      <div id="gameBody"><p class="muted" style="margin-top:8px;">Coming soon — your stats will live here.</p></div>
+    </div>
+
+    <!-- edit profile -->
+    <div id="profPanel" class="card fill hidden">
+      <h2>Edit profile</h2>
       <p class="muted">Your name</p><input id="epName" type="text">
-      <p class="muted">Picture — paste URL or upload (auto-shrunk)</p>
+      <p class="muted">Picture — paste URL or upload</p>
       <input id="epPhoto" type="url" placeholder="https://…">
       <button id="epUpload" style="margin-top:6px;">Choose file…</button>
       <input id="epFile" type="file" accept="image/*" class="hidden">
-      <div style="margin-top:12px;"><button class="primary" id="epSave">Save</button> <button id="epCancel">Cancel</button></div>
+      <div style="margin-top:10px;"><button class="primary" id="epSave">Save</button><button id="epCancel">Cancel</button></div>
     </div>
 
-    <!-- appearance panel -->
-    <div id="appearancePanel" class="card fill hidden">
-      <h2 style="margin-top:0;">Appearance</h2>
-      <p class="muted">Background colour:</p>
-      <div id="apSwatches" style="margin-bottom:8px;"></div>
-      <p class="muted">…or paste an image URL (shown faded):</p>
-      <input id="apBg" type="text" placeholder="#eef6ef or https://image…">
-      <div style="margin-top:12px;"><button class="primary" id="apSave">Save</button> <button id="apCancel">Cancel</button></div>
+    <!-- appearance -->
+    <div id="apPanel" class="card fill hidden">
+      <h2>Appearance</h2>
+      <p class="muted">Background colour:</p><div id="apSwatches" style="margin-bottom:6px;"></div>
+      <p class="muted">…or an image URL:</p><input id="apBg" type="text" placeholder="#c9dcf0 or https://…">
+      <p class="muted" style="margin-top:8px;">Opacity — <span id="apOpVal">90</span>% (max 90)</p>
+      <input id="apOpacity" type="range" min="0" max="90" value="90" style="width:100%;">
+      <div style="margin-top:10px;"><button class="primary" id="apSave">Save</button><button id="apCancel">Cancel</button></div>
     </div>
 
-    <!-- custom boxes render here -->
+    <!-- ask a question -->
+    <div class="card">
+      <div class="cardhead"><h2 id="askHeading">Ask a question</h2><button id="askToggle">Collapse ▴</button></div>
+      <div id="askBody">
+        <div style="display:flex;gap:6px;margin-top:8px;">
+          <input id="askInput" type="text" placeholder="Type your question…" style="flex:1;">
+          <button class="primary" id="askBtn">Ask</button>
+        </div>
+        <p class="muted" style="margin:8px 0 2px;">Past questions (newest first)
+          <button id="qaToggle" style="font-size:11px;padding:1px 6px;">show/hide</button></p>
+        <div id="qaList"></div>
+      </div>
+    </div>
+
+    <!-- custom boxes -->
     <div id="boxesArea"></div>
 
-    <!-- assigned worksheets -->
+    <!-- assigned work (never collapses) -->
     <div class="card">
-      <h2 style="margin-top:0;" id="assignedHeading">Your assigned work</h2>
-      <div id="assignedList"><p class="muted">Loading…</p></div>
+      <div class="cardhead"><h2 id="assignedHeading">Your assigned work</h2><button id="refreshAssigned">⟳</button></div>
+      <div id="assignedList" style="margin-top:8px;"><p class="muted">Loading…</p></div>
     </div>
 
-    <!-- opened worksheet renders here -->
+    <!-- opened worksheet -->
     <div id="openWorksheet"></div>
 
-    <div class="card"><button id="exportMineBtn">⬇ Export my answers</button></div>
+    <div class="card">
+      <button id="exportJson">⬇ JSON</button>
+      <button id="exportCsv">⬇ Spreadsheet (CSV)</button>
+    </div>
   </div>
-
 </div>
 
-<div id="runnerBottom" class="runner" style="margin-top:30px;"></div>
+<div id="runnerBottom" class="runner" style="margin-top:24px;"></div>
 
 <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-auth-compat.js"></script>
