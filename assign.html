@@ -70,12 +70,12 @@ function render(uid){
       r.appendChild(left);
       r.appendChild(mkBtn("▲","arrow",function(){ swap(uid,assigned,i,-1); }));
       r.appendChild(mkBtn("▼","arrow",function(){ swap(uid,assigned,i,1); }));
-      if(a.done) r.appendChild(mkBtn("Reset done","",function(){
+      if(a.done) r.appendChild(mkBtn("Reset done","edit",function(){
         studentsCol.doc(uid).collection("assignments").doc(a.wsId)
           .set({done:false,doneAt:null},{merge:true}).then(function(){ render(uid); })
           .catch(handleErr("Could not reset"));
       }));
-      r.appendChild(mkBtn("Unassign","",function(){
+      r.appendChild(mkBtn("Unassign","del",function(){
         studentsCol.doc(uid).collection("assignments").doc(a.wsId).delete()
           .then(function(){ render(uid); }).catch(handleErr("Could not unassign"));
       }));
@@ -90,7 +90,7 @@ function render(uid){
     sel.innerHTML='<option value="">+ Add a worksheet…</option>'+
       free.map(function(w){return '<option value="'+w.id+'">'+esc(w.title)+'</option>';}).join("");
     add.appendChild(sel);
-    add.appendChild(mkBtn("Add","primary",function(){
+    add.appendChild(mkBtn("Add","act",function(){
       if(!sel.value) return;
       studentsCol.doc(uid).collection("assignments").doc(sel.value)
         .set({order:assigned.length,done:false,doneAt:null})

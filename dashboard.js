@@ -17,7 +17,15 @@
 
 var TEACHER=null, teacherProfile={}, siteSettings={};
 var studentsCache=[], worksheetsCache=[], allTags=[], activeTag="";
-var fbEditor=null, templatesCache=[];
+var fbEditor=null, templatesCache=[], wordlistBuilt=false;
+function wordRefs(){
+  var raw=(teacherProfile.wordRefs||"");
+  return raw.split("\n").map(function(line){
+    var p=line.split("|").map(function(x){return x.trim();});
+    if(!p[0]&&!p[1]) return null;
+    return {label:p[0]||"Reference", url:p[1]||"", mode:(p[2]||"collapsible")};
+  }).filter(function(x){ return x && x.url; });
+}
 
 auth.onAuthStateChanged(function(user){
   if(!user){ location.href="index.html"; return; }
@@ -36,14 +44,23 @@ auth.onAuthStateChanged(function(user){
 
 function wireAll(){
   $("logoutBtn").onclick=logout;
-  $("gameBtn").onclick=function(){ $("apPanel").classList.add("hidden"); $("gamePanel").classList.toggle("hidden"); };
+  $("gameBtn").onclick=function(){ $("apPanel").classList.add("hidden"); $("wordPanel").classList.add("hidden"); $("gamePanel").classList.toggle("hidden"); };
+  $("wordBtn").onclick=function(){
+    $("apPanel").classList.add("hidden"); $("gamePanel").classList.add("hidden");
+    $("wordPanel").classList.toggle("hidden");
+    if(!$("wordPanel").classList.contains("hidden") && !wordlistBuilt){
+      wordlistBuilt=true;
+      buildWordlist($("wordBody"), teacherRef.collection("wordlist"), wordRefs(), false);
+    }
+  };
+  $("wordClose").onclick=function(){ $("wordPanel").classList.add("hidden"); };
   $("gameClose").onclick=function(){ $("gamePanel").classList.add("hidden"); };
   $("profBtn").onclick=function(){ document.querySelector('.tab[data-panel="profile"]').click(); };
 
   $("apBtn").onclick=function(){
     renderSwatches("apSwatches","apBg");
     $("apBg").value=teacherProfile.bg||"";
-    $("apOpacity").value=teacherProfile.opacity==null?90:teacherProfile.opacity;
+    $("apOpacity").value=Math.min(80,teacherProfile.opacity==null?80:teacherProfile.opacity);
     $("apOpVal").textContent=$("apOpacity").value;
     $("gamePanel").classList.add("hidden");
     $("apPanel").classList.toggle("hidden");
@@ -58,7 +75,7 @@ function wireAll(){
     }).catch(handleErr("Could not save appearance"));
   };
 
-  wireProfile(); wireWorksheets(); wireGold(); wireQuestions(); wireBoxes(); wireFeedback();
+  wireProfile(); wireWorksheets(); wireGold(); wireQuestions(); wireBoxes(); wireFeedback(); wireMark();
 }
 
 // ---------------- profile ----------------
@@ -71,6 +88,7 @@ function loadTeacherProfile(){
     $("goodUrl").value=teacherProfile.goodStamp||"";
     $("ngUrl").value=teacherProfile.ngStamp||"";
     $("pBlurb").value=teacherProfile.parentBlurb||SITE_DEFAULTS.parentBlurb;
+    $("pWordRefs").value=teacherProfile.wordRefs||"";
     var g=teacherProfile.gold||0;
     $("myGold").textContent=g; $("myGold2").textContent=g; $("gameGold").textContent=g;
     $("teacherGoldInput").value=g;
@@ -85,7 +103,8 @@ function wireProfile(){
   $("saveProfileBtn").onclick=function(){
     var p={ name:$("pName").value.trim()||"Jim", photo:$("pPhoto").value.trim(),
       goodStamp:$("goodUrl").value.trim(), ngStamp:$("ngUrl").value.trim(),
-      parentBlurb:$("pBlurb").value.trim() };
+      parentBlurb:$("pBlurb").value.trim(),
+      wordRefs:$("pWordRefs").value };
     teacherRef.set(p,{merge:true}).then(function(){
       Object.assign(teacherProfile,p);
       $("myName").textContent=p.name;
@@ -121,10 +140,10 @@ function renderStudents(){
     var r=el("div","row");
     r.innerHTML='<div class="left"><span class="avatar" style="width:26px;height:26px;font-size:12px;">'+avatarOf(s)+
       '</span> <strong>'+esc(s.email)+'</strong></div>';
-    r.appendChild(mkBtn("Approve","primary",function(){
+    r.appendChild(mkBtn("Approve","act",function(){
       studentsCol.doc(s.uid).set({status:"approved"},{merge:true}).catch(handleErr("Could not approve"));
     }));
-    r.appendChild(mkBtn("Remove","",function(){
+    r.appendChild(mkBtn("Remove","del",function(){
       if(confirm("Remove "+s.email+"?")) studentsCol.doc(s.uid).delete().catch(handleErr("Could not remove"));
     }));
     pl.appendChild(r);
@@ -140,7 +159,7 @@ function renderStudents(){
     top.appendChild(el("span","muted","gold:"));
     var gi=document.createElement("input"); gi.type="number"; gi.value=s.gold||0; gi.style.width="72px";
     top.appendChild(gi);
-    top.appendChild(mkBtn("Set","",function(){
+    top.appendChild(mkBtn("Set","act",function(){
       var v=Number(gi.value)||0, diff=v-(s.gold||0);
       studentsCol.doc(s.uid).set({gold:v},{merge:true}).then(function(){
         if(diff) return goldLogCol.add({uid:s.uid,studentName:s.name||s.email,
@@ -148,8 +167,8 @@ function renderStudents(){
           amount:diff,at:firebase.firestore.FieldValue.serverTimestamp(),kind:"manual"});
       }).catch(handleErr("Could not set gold"));
     }));
-    top.appendChild(mkBtn("👁 View as","",function(){ location.href="student.html?as="+s.uid; }));
-    top.appendChild(mkBtn("Remove access","",function(){
+    top.appendChild(mkBtn("👁 View as","edit",function(){ location.href="student.html?as="+s.uid; }));
+    top.appendChild(mkBtn("Remove access","del",function(){
       if(confirm("Remove access for "+(s.name||s.email)+"?"))
         studentsCol.doc(s.uid).set({status:"pending"},{merge:true});
     }));
@@ -170,7 +189,7 @@ function renderStudents(){
     var vi=document.createElement("input"); vi.type="email"; vi.placeholder="add another email…";
     vi.style.cssText="flex:1;min-width:160px;";
     chips.appendChild(vi);
-    chips.appendChild(mkBtn("+ Add","primary",function(){
+    chips.appendChild(mkBtn("+ Add","act",function(){
       var e2=(vi.value||"").trim().toLowerCase();
       if(!e2) return;
       var next=(s.viewers||[]).slice(); if(next.indexOf(e2)<0) next.push(e2);
@@ -201,7 +220,7 @@ function loadWorksheets(){
   wsCol.orderBy("order","asc").onSnapshot(function(snap){
     worksheetsCache=[];
     snap.forEach(function(d){ worksheetsCache.push(Object.assign({id:d.id},d.data())); });
-    collectTags(); renderWorksheets(); renderGoldSettings();
+    collectTags(); renderWorksheets();
   },function(e){ $("wsList").innerHTML='<p class="muted">Could not load: '+esc(e.message)+'</p>'; });
 }
 function collectTags(){
@@ -251,12 +270,23 @@ function renderWorksheets(){
     left.appendChild(ti);
     r.appendChild(left);
 
+    r.appendChild(el("span","muted","gold:"));
+    var gi=document.createElement("input");
+    gi.type="number"; gi.min="0"; gi.value=w.gold||0; gi.style.width="70px";
+    var gm=el("span","muted");
+    gi.onchange=function(){
+      wsCol.doc(w.id).set({gold:Number(gi.value)||0},{merge:true})
+        .then(function(){ gm.textContent="✓"; setTimeout(function(){gm.textContent="";},1200); })
+        .catch(handleErr("Could not save gold"));
+    };
+    r.appendChild(gi); r.appendChild(gm);
+
     r.appendChild(mkBtn("▲","arrow",function(){ moveWs(idx,-1); }));
     r.appendChild(mkBtn("▼","arrow",function(){ moveWs(idx,1); }));
-    r.appendChild(mkBtn("Edit","",function(){ location.href="editor.html?id="+w.id; }));
-    r.appendChild(mkBtn("Assign","",function(){ location.href="assign.html?ws="+w.id; }));
-    r.appendChild(mkBtn("Generate ➕","",function(){ location.href="generator.html?src="+w.id; }));
-    r.appendChild(mkBtn("Delete","",function(){
+    r.appendChild(mkBtn("Edit","edit",function(){ location.href="editor.html?id="+w.id; }));
+    r.appendChild(mkBtn("Assign","assign",function(){ location.href="assign.html?ws="+w.id; }));
+    r.appendChild(mkBtn("Generate","act",function(){ location.href="generator.html?src="+w.id; }));
+    r.appendChild(mkBtn("Delete","del",function(){
       if(confirm('Delete "'+w.title+'"? This cannot be undone.')) wsCol.doc(w.id).delete();
     }));
     box.appendChild(r);
@@ -383,24 +413,6 @@ function importCSV(text){
 }
 
 // ---------------- gold ----------------
-function renderGoldSettings(){
-  var box=$("goldSetList"); box.innerHTML="";
-  if(!worksheetsCache.length){ box.innerHTML='<p class="muted">No worksheets yet.</p>'; return; }
-  worksheetsCache.forEach(function(w){
-    var r=el("div","row");
-    r.appendChild(el("div","left","<strong>"+esc(w.title)+"</strong>"));
-    r.appendChild(el("span","muted","per submit:"));
-    var i=document.createElement("input"); i.type="number"; i.min="0"; i.value=w.gold||0; i.style.width="80px";
-    r.appendChild(i);
-    var m=el("span","muted");
-    r.appendChild(mkBtn("Save","",function(){
-      wsCol.doc(w.id).set({gold:Number(i.value)||0},{merge:true})
-        .then(function(){ flash(m,"✓"); }).catch(handleErr("Could not save"));
-    }));
-    r.appendChild(m);
-    box.appendChild(r);
-  });
-}
 function wireGold(){
   function setTeacherGold(v){
     v=Math.max(0,Math.min(99999,Number(v)||0));
@@ -494,16 +506,16 @@ function renderQuestion(q){
   inp.placeholder="Your reply (they'll see it)"; inp.value=q.reply||"";
   card.appendChild(inp);
   var bar=el("div"); bar.style.marginTop="6px";
-  bar.appendChild(mkBtn("Reply","primary",function(){
+  bar.appendChild(mkBtn("Reply","act",function(){
     studentsCol.doc(q.student.uid).collection("questions").doc(q.id)
       .set({reply:inp.value.trim(),answered:true},{merge:true})
       .then(loadAllQuestions).catch(handleErr("Could not reply"));
   }));
-  bar.appendChild(mkBtn("Mark handled","",function(){
+  bar.appendChild(mkBtn("Mark handled","edit",function(){
     studentsCol.doc(q.student.uid).collection("questions").doc(q.id)
       .set({answered:true},{merge:true}).then(loadAllQuestions);
   }));
-  bar.appendChild(mkBtn("Delete","",function(){
+  bar.appendChild(mkBtn("Delete","del",function(){
     if(confirm("Delete this question?"))
       studentsCol.doc(q.student.uid).collection("questions").doc(q.id).delete().then(loadAllQuestions);
   }));
@@ -568,6 +580,14 @@ function renderBoxes(list){
     card.appendChild(itemBox);
     card.appendChild(mkBtn("+ Add item","",function(){ items.push({label:"",url:"",mode:"open"}); drawItems(); }));
 
+    card.appendChild(el("p","muted","Student text box in this box:"));
+    var tbSel=document.createElement("select"); tbSel.style.width="auto";
+    tbSel.innerHTML='<option value="off">None</option>'+
+      '<option value="single">One box they edit &amp; save</option>'+
+      '<option value="list">Save adds to a list below</option>';
+    tbSel.value=b.textbox||"off";
+    card.appendChild(tbSel);
+
     card.appendChild(el("p","muted","Who sees this box?"));
     var aud=el("div"); aud.style.cssText="display:flex;gap:10px;flex-wrap:wrap;align-items:center;";
     var nameAll="aud_"+b.id;
@@ -575,9 +595,12 @@ function renderBoxes(list){
     rAll.checked=b.audience==="all";
     var lAll=el("label"); lAll.appendChild(rAll); lAll.appendChild(document.createTextNode(" All students"));
     var rSome=document.createElement("input"); rSome.type="radio"; rSome.name=nameAll; rSome.style.width="auto";
-    rSome.checked=b.audience!=="all";
+    rSome.checked=b.audience==="some"||b.audience==null;
     var lSome=el("label"); lSome.appendChild(rSome); lSome.appendChild(document.createTextNode(" Only these:"));
-    aud.appendChild(lAll); aud.appendChild(lSome);
+    var rNone=document.createElement("input"); rNone.type="radio"; rNone.name=nameAll; rNone.style.width="auto";
+    rNone.checked=b.audience==="none";
+    var lNone=el("label"); lNone.appendChild(rNone); lNone.appendChild(document.createTextNode(" No one (hidden)"));
+    aud.appendChild(lAll); aud.appendChild(lSome); aud.appendChild(lNone);
     card.appendChild(aud);
 
     var picks=el("div"); picks.style.cssText="margin-top:5px;";
@@ -597,19 +620,20 @@ function renderBoxes(list){
         picks.appendChild(lab);
       });
     }
-    rAll.onchange=drawPicks; rSome.onchange=drawPicks; drawPicks();
+    rAll.onchange=drawPicks; rSome.onchange=drawPicks; rNone.onchange=drawPicks; drawPicks();
     card.appendChild(picks);
 
     var actions=el("div"); actions.style.marginTop="10px";
     var m2=el("span","muted");
-    actions.appendChild(mkBtn("Save box","primary",function(){
+    actions.appendChild(mkBtn("Save box","act",function(){
       boxesCol.doc(b.id).set({
         title:ti.value.trim(), text:tx.value,
-        audience:rAll.checked?"all":"some", students:chosen,
+        audience:rAll.checked?"all":(rNone.checked?"none":"some"), students:chosen,
+        textbox:tbSel.value,
         items:items.filter(function(x){return x.url;})
       },{merge:true}).then(function(){ flash(m2,"Saved ✓"); }).catch(handleErr("Could not save box"));
     }));
-    actions.appendChild(mkBtn("Delete box","",function(){
+    actions.appendChild(mkBtn("Delete box","del",function(){
       if(confirm('Delete box "'+b.title+'"?')) boxesCol.doc(b.id).delete();
     }));
     actions.appendChild(m2);
@@ -670,11 +694,11 @@ function loadTemplates(){
       card.appendChild(ed);
       var m=el("span","muted");
       var bar=el("div"); bar.style.marginTop="6px";
-      bar.appendChild(mkBtn("Save","primary",function(){
+      bar.appendChild(mkBtn("Save","act",function(){
         templatesCol.doc(t.id).set({html:ed.getHTML()},{merge:true})
           .then(function(){ flash(m,"Saved ✓"); }).catch(handleErr("Could not save"));
       }));
-      bar.appendChild(mkBtn("Delete","",function(){
+      bar.appendChild(mkBtn("Delete","del",function(){
         if(confirm('Delete template "'+t.name+'"?')) templatesCol.doc(t.id).delete();
       }));
       bar.appendChild(m);
@@ -694,7 +718,7 @@ function loadFeedback(){
       card.innerHTML='<strong>'+esc(r.studentName||"")+'</strong> <span class="muted">— '+esc(fmtTime(r.at))+'</span>';
       var body=el("div"); body.innerHTML=r.html||""; body.style.margin="5px 0";
       card.appendChild(body);
-      card.appendChild(mkBtn("Delete","",function(){
+      card.appendChild(mkBtn("Delete","del",function(){
         if(confirm("Delete this note?")) feedbackCol.doc(r.id).delete().then(loadFeedback);
       }));
       box.appendChild(card);
@@ -761,4 +785,146 @@ function exportAnswersCSV(){
     downloadCSV(rows,"all-answers.csv");
     b.textContent="⬇ All answers (CSV)";
   }).catch(function(e){ showErr("Export failed: "+e.message); b.textContent="⬇ All answers (CSV)"; });
+}
+
+// ============================================================
+//  MARK TAB — per-student review of attempts
+// ============================================================
+function wireMark(){
+  var sel=$("markStudent"); if(!sel) return;
+  document.querySelector('.tab[data-panel="mark"]').addEventListener("click",fillMarkStudents);
+  $("markLoad").onclick=loadMark;
+  sel.onchange=loadMark;
+}
+function fillMarkStudents(){
+  var sel=$("markStudent"); var cur=sel.value;
+  sel.innerHTML='<option value="">— pick a student —</option>';
+  studentsCache.filter(function(s){return s.status==="approved";}).forEach(function(s){
+    sel.innerHTML+='<option value="'+s.uid+'">'+esc(s.name||s.email)+'</option>';
+  });
+  if(cur) sel.value=cur;
+}
+function loadMark(){
+  var uid=$("markStudent").value;
+  var area=$("markArea");
+  if(!uid){ area.innerHTML='<p class="muted">Pick a student and press Load.</p>'; return; }
+  var student=studentsCache.filter(function(s){return s.uid===uid;})[0]||{};
+  var onlyUnmarked=$("markUnmarkedOnly").checked;
+  area.innerHTML='<p class="spinner">Loading…</p>';
+
+  studentsCol.doc(uid).collection("assignments").get().then(function(snap){
+    var assigned=[]; snap.forEach(function(d){ assigned.push(Object.assign({wsId:d.id},d.data())); });
+    assigned.sort(function(a,b){ return (a.order||0)-(b.order||0); });
+    if(!assigned.length){ area.innerHTML='<p class="muted">Nothing assigned to this student.</p>'; return; }
+
+    return Promise.all(assigned.map(function(a){
+      var w=worksheetsCache.filter(function(x){return x.id===a.wsId;})[0];
+      return studentsCol.doc(uid).collection("answers").doc(a.wsId).collection("attempts")
+        .orderBy("createdAt","asc").get().then(function(sn){
+          var atts=[]; sn.forEach(function(d){ atts.push(Object.assign({id:d.id},d.data())); });
+          return {ws:w,assignment:a,attempts:atts};
+        }).catch(function(){ return {ws:w,assignment:a,attempts:[]}; });
+    })).then(function(rows){
+      area.innerHTML="";
+      var totalUnmarked=0;
+      rows.forEach(function(r){
+        if(!r.ws) return;
+        var unmarked=r.attempts.filter(function(a){ return !a.status; });
+        totalUnmarked+=unmarked.length;
+        var show=onlyUnmarked?unmarked:r.attempts;
+
+        var card=el("div","card");
+        var head=el("div","cardhead");
+        var t=el("div");
+        t.innerHTML='<strong>'+esc(r.ws.title)+'</strong> <span class="muted">· '+
+          r.attempts.length+' attempt(s)'+(unmarked.length?', <strong>'+unmarked.length+' unmarked</strong>':', all marked ✓')+'</span>';
+        head.appendChild(t);
+        var body=el("div");
+        var btn=mkBtn("","");
+        head.appendChild(btn);
+        card.appendChild(head); card.appendChild(body);
+
+        if(!show.length){
+          body.appendChild(el("p","muted", onlyUnmarked?"Nothing unmarked here.":"No attempts yet."));
+        } else {
+          show.forEach(function(a){ body.appendChild(markCard(student,r.ws,a)); });
+        }
+        makeCollapsible(body,btn, unmarked.length>0);
+        area.appendChild(card);
+      });
+      var summary=el("div","card fill");
+      summary.innerHTML='<strong>'+esc(student.name||student.email)+'</strong> — '+
+        totalUnmarked+' unmarked attempt(s) across '+rows.length+' worksheet(s).';
+      area.insertBefore(summary,area.firstChild);
+    });
+  }).catch(handleErr("Could not load"));
+}
+
+function markCard(student, ws, att){
+  var c=el("div","card fill");
+  var head=el("div","muted");
+  head.innerHTML='<strong>'+esc(att.name||"Attempt")+'</strong>'+
+    (att.submitted?' · submitted '+esc(fmtTime(att.submittedAt)):' · not submitted')+
+    (att.status==="good"?' <span class="good">Good job ✓</span>':'')+
+    (att.status==="ng"?' <span class="ng">Try again ✗</span>':'');
+  c.appendChild(head);
+
+  var responses=att.responses||{}, comments=att.comments||{}, drawings=att.drawings||{};
+  var editors=[], cmts=[];
+  (ws.questions||[]).forEach(function(q,i){
+    var d=el("div"); d.style.margin="8px 0";
+    d.appendChild(el("p",null,"<strong>"+esc(q.label||("Question "+(i+1)))+".</strong> "+esc(q.text||"")));
+    if(q.type==="draw"){
+      if(drawings[i]) d.innerHTML+='<img src="'+esc(drawings[i])+'" style="max-width:100%;border:1px solid #000;">';
+      else d.appendChild(el("p","muted","(no drawing)"));
+    } else if(q.type==="check"){
+      d.appendChild(el("p",null, responses[i]==="yes"?"✓ ticked":"— not ticked"));
+    } else if(q.type==="task"){
+      d.appendChild(el("p","muted","(task)"));
+    } else if(q.type==="mc"){
+      d.appendChild(el("p",null,"Chose: <strong>"+esc(responses[i]||"(nothing)")+"</strong>"+
+        (q.correct>=0?'<span class="muted"> · correct: '+esc((q.options||[])[q.correct]||"")+'</span>':"")));
+    } else {
+      var ed=makeRichEditor(responses[i]||"");
+      d.appendChild(ed);
+      editors.push({i:i,get:function(){return ed.getHTML();}});
+    }
+    var cm=document.createElement("input");
+    cm.type="text"; cm.placeholder="Comment (student sees this)"; cm.value=comments[i]||"";
+    cm.style.marginTop="4px";
+    d.appendChild(cm); cmts.push({i:i,el:cm});
+    c.appendChild(d);
+  });
+
+  if(att.photo){
+    c.appendChild(el("p","muted","📷 photo:"));
+    var im=document.createElement("img"); im.src=att.photo;
+    im.style.cssText="max-width:240px;border:1px solid #000;display:block;";
+    c.appendChild(im);
+  }
+
+  var status=att.status||"";
+  var bar=el("div"); bar.style.margin="8px 0";
+  bar.appendChild(el("span",null,"Mark: "));
+  var ngB=mkBtn("Try again ✗", status==="ng"?"ng":"");
+  var okB=mkBtn("Good job ✓", status==="good"?"good":"");
+  ngB.onclick=function(){ status="ng"; ngB.className="ng"; okB.className=""; };
+  okB.onclick=function(){ status="good"; okB.className="good"; ngB.className=""; };
+  bar.appendChild(ngB); bar.appendChild(okB);
+  c.appendChild(bar);
+
+  var msg=el("span","muted");
+  var act=el("div");
+  act.appendChild(mkBtn("Save","act",function(){
+    var resp=Object.assign({},responses);
+    editors.forEach(function(e2){ resp[e2.i]=e2.get(); });
+    var cm={}; cmts.forEach(function(x){ if(x.el.value.trim()) cm[x.i]=x.el.value.trim(); });
+    studentsCol.doc(student.uid).collection("answers").doc(ws.id).collection("attempts").doc(att.id)
+      .set({responses:resp,comments:cm,status:status},{merge:true})
+      .then(function(){ msg.textContent="Saved ✓"; setTimeout(function(){msg.textContent="";},1800); })
+      .catch(handleErr("Could not save"));
+  }));
+  act.appendChild(msg);
+  c.appendChild(act);
+  return c;
 }

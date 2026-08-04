@@ -38,11 +38,13 @@
             <span class="gold"><span class="dot"></span><span id="myGold">0</span> gold</span><br>
             <span class="muted" id="myEmail"></span></div>
         </div>
-        <div>
-          <button id="gameBtn">Game</button>
+        <div class="btnbar">
+          <button class="fun" id="gameBtn">Game</button>
+          <button class="fun" id="wordBtn">Wordlist</button>
+          <button id="askBtn2">Ask</button>
           <button id="profBtn">Profile</button>
-          <button id="apBtn">⚙ Appearance</button>
-          <button id="logoutBtn">Log out</button>
+          <button id="apBtn">⚙</button>
+          <button class="out" id="logoutBtn">Log out</button>
         </div>
       </div>
     </div>
@@ -53,6 +55,12 @@
       <div id="gameBody"><p class="muted" style="margin-top:8px;">Coming soon — your stats will live here.</p></div>
     </div>
 
+    <!-- wordlist -->
+    <div id="wordPanel" class="card hidden">
+      <div class="cardhead"><h2>Wordlist</h2><button id="wordClose" class="close">Close ▴</button></div>
+      <div id="wordBody"></div>
+    </div>
+
     <!-- edit profile -->
     <div id="profPanel" class="card fill hidden">
       <h2>Edit profile</h2>
@@ -61,7 +69,7 @@
       <input id="epPhoto" type="url" placeholder="https://…">
       <button id="epUpload" style="margin-top:6px;">Choose file…</button>
       <input id="epFile" type="file" accept="image/*" class="hidden">
-      <div style="margin-top:10px;"><button class="primary" id="epSave">Save</button><button id="epCancel">Cancel</button></div>
+      <div style="margin-top:10px;"><button class="act" id="epSave">Save</button><button id="epCancel">Cancel</button></div>
     </div>
 
     <!-- appearance -->
@@ -71,16 +79,16 @@
       <p class="muted">…or an image URL:</p><input id="apBg" type="text" placeholder="#c9dcf0 or https://…">
       <p class="muted" style="margin-top:8px;">Opacity — <span id="apOpVal">90</span>% (max 90)</p>
       <input id="apOpacity" type="range" min="0" max="90" value="90" style="width:100%;">
-      <div style="margin-top:10px;"><button class="primary" id="apSave">Save</button><button id="apCancel">Cancel</button></div>
+      <div style="margin-top:10px;"><button class="act" id="apSave">Save</button><button id="apCancel">Cancel</button></div>
     </div>
 
     <!-- ask a question -->
-    <div class="card">
-      <div class="cardhead"><h2 id="askHeading">Ask a question</h2><button id="askToggle">Collapse ▴</button></div>
+    <div class="card hidden" id="askCard">
+      <div class="cardhead"><h2 id="askHeading">Ask a question</h2><button id="askToggle" class="close">Close ▴</button></div>
       <div id="askBody">
         <div style="display:flex;gap:6px;margin-top:8px;">
           <input id="askInput" type="text" placeholder="Type your question…" style="flex:1;">
-          <button class="primary" id="askBtn">Ask</button>
+          <button class="act" id="askBtn">Ask</button>
         </div>
         <p class="muted" style="margin:8px 0 2px;">Past questions (newest first)
           <button id="qaToggle" style="font-size:11px;padding:1px 6px;">show/hide</button></p>

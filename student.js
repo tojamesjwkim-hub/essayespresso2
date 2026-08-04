@@ -7,7 +7,7 @@ var params   = new URLSearchParams(location.search);
 var asUid    = params.get("as");
 var previewWs= params.get("preview");
 
-var ME=null, meData=null, readOnly=false, viewerIsTeacher=false;
+var ME=null, meData=null, readOnly=false, viewerIsTeacher=false, wordlistBuilt=false;
 var siteSettings={}, teacherProfile={}, worksheetCache={};
 
 // ---------- boot ----------
@@ -31,8 +31,12 @@ auth.onAuthStateChanged(function(user){
   ME=user.uid;
   ensureStudentDoc(user).then(function(snap){
     meData=snap.data();
-    if(meData.status!=="approved"){ showPending(user); return; }
-    startApp();
+    if(meData.status==="approved"){ startApp(); return; }
+    // not approved — are they a parent viewer? if so, send them to the parent page
+    findViewableStudents(user.email).then(function(kids){
+      if(kids && kids.length){ location.href="parent.html"; return; }
+      showPending(user);
+    }).catch(function(){ showPending(user); });
   }).catch(handleErr("Could not load your account"));
 });
 
@@ -77,6 +81,7 @@ function startApp(){
   $("loading").classList.add("hidden");
   $("app").classList.remove("hidden");
   paintMe();
+  addPanelGears();
   applyBackground(meData.bg,meData.opacity);
   wirePanels();
   loadBoxes();
@@ -118,12 +123,29 @@ function wirePanels(){
     (others||[]).forEach(function(o){ $(o).classList.add("hidden"); });
     $(id).classList.toggle("hidden");
   }
-  $("gameBtn").onclick=function(){ toggle("gamePanel",["profPanel","apPanel"]); };
+  $("gameBtn").onclick=function(){ toggle("gamePanel",["profPanel","apPanel","wordPanel"]); };
+  $("wordBtn").onclick=function(){
+    toggle("wordPanel",["gamePanel","profPanel","apPanel"]);
+    if(!$("wordPanel").classList.contains("hidden") && !wordlistBuilt){
+      wordlistBuilt=true;
+      teacherRef.get().then(function(ts){
+        var raw=(ts.exists && ts.data().wordRefs)||"";
+        var refs=raw.split("\n").map(function(line){
+          var p2=line.split("|").map(function(x){return x.trim();});
+          if(!p2[0]&&!p2[1]) return null;
+          return {label:p2[0]||"Reference",url:p2[1]||"",mode:(p2[2]||"collapsible")};
+        }).filter(function(x){ return x && x.url; });
+        buildWordlist($("wordBody"), studentsCol.doc(ME).collection("wordlist"), refs, readOnly);
+      });
+    }
+  };
+  $("wordClose").onclick=function(){ $("wordPanel").classList.add("hidden"); };
+  $("askBtn2").onclick=function(){ $("askCard").classList.toggle("hidden"); };
   $("gameClose").onclick=function(){ $("gamePanel").classList.add("hidden"); };
 
   $("profBtn").onclick=function(){
     $("epName").value=meData.name||""; $("epPhoto").value=meData.photo||"";
-    toggle("profPanel",["gamePanel","apPanel"]);
+    toggle("profPanel",["gamePanel","apPanel","wordPanel"]);
   };
   $("epCancel").onclick=function(){ $("profPanel").classList.add("hidden"); };
   wireImageUpload("epUpload","epFile","epPhoto",240);
@@ -137,9 +159,9 @@ function wirePanels(){
   $("apBtn").onclick=function(){
     renderSwatches("apSwatches","apBg");
     $("apBg").value=meData.bg||"";
-    $("apOpacity").value=meData.opacity==null?90:meData.opacity;
+    $("apOpacity").value=Math.min(80,meData.opacity==null?80:meData.opacity);
     $("apOpVal").textContent=$("apOpacity").value;
-    toggle("apPanel",["gamePanel","profPanel"]);
+    toggle("apPanel",["gamePanel","profPanel","wordPanel"]);
   };
   $("apOpacity").oninput=function(){ $("apOpVal").textContent=$("apOpacity").value; };
   $("apCancel").onclick=function(){ $("apPanel").classList.add("hidden"); };
@@ -189,6 +211,7 @@ function loadBoxes(){
     var area=$("boxesArea"); area.innerHTML="";
     snap.forEach(function(d){
       var b=d.data();
+      if(b.audience==="none") return;
       var visible = b.audience==="all" || (b.students||[]).indexOf(ME)>=0;
       if(!visible) return;
       area.appendChild(renderBox(b));
@@ -200,14 +223,68 @@ function renderBox(b){
   var head=el("div","cardhead");
   head.appendChild(el("h2",null,esc(b.title||"")));
   var body=el("div");
-  var btn=mkBtn("Collapse ▴","");
+  var btn=mkBtn("","");
   head.appendChild(btn);
   card.appendChild(head); card.appendChild(body);
+
+  addBoxGear(head, card, (meData.boxTints||{})["box_"+b.id], function(c){
+    var t=Object.assign({},meData.boxTints||{}); t["box_"+b.id]=c;
+    meData.boxTints=t;
+    if(!readOnly) studentsCol.doc(ME).set({boxTints:t},{merge:true});
+  });
+
   if(b.text){ var p=el("p"); p.style.margin="8px 0 4px"; p.textContent=b.text; body.appendChild(p); }
   (b.items||[]).forEach(function(it){
     if(!it.url) return;
     body.appendChild(makeEmbed(it.label,it.url,it.mode||"open"));
   });
+
+  // optional free text box for the student
+  if(b.textbox && b.textbox!=="off"){
+    body.appendChild(el("p","muted","Your notes:"));
+    var ta=document.createElement("textarea"); ta.style.minHeight="60px";
+    var noteRef=studentsCol.doc(ME).collection("boxnotes").doc(b.id);
+    var msg=el("span","muted");
+    var listBox=el("div");
+    noteRef.get().then(function(sn){
+      if(sn.exists){
+        var d=sn.data();
+        if(b.textbox==="single") ta.value=d.text||"";
+        else renderNotes(d.entries||[]);
+      }
+    }).catch(function(){});
+    function renderNotes(entries){
+      listBox.innerHTML="";
+      (entries||[]).slice().reverse().forEach(function(e2){
+        listBox.appendChild(el("div","comment","<strong>"+esc(fmtTime(e2.at))+"</strong><br>"+esc(e2.text)));
+      });
+    }
+    body.appendChild(ta);
+    if(!readOnly){
+      var save=mkBtn("Save","primary",function(){
+        var v=ta.value.trim(); if(!v) return;
+        if(b.textbox==="single"){
+          noteRef.set({text:v},{merge:true}).then(function(){
+            msg.textContent="Saved ✓"; setTimeout(function(){msg.textContent="";},1500);
+          }).catch(function(e3){ msg.textContent="Error: "+e3.message; });
+        } else {
+          noteRef.get().then(function(sn){
+            var entries=(sn.exists&&sn.data().entries)||[];
+            entries.push({text:v,at:new Date().toISOString()});
+            return noteRef.set({entries:entries},{merge:true}).then(function(){
+              ta.value=""; renderNotes(entries); msg.textContent="Saved ✓";
+              setTimeout(function(){msg.textContent="";},1500);
+            });
+          }).catch(function(e3){ msg.textContent="Error: "+e3.message; });
+        }
+      });
+      var bar2=el("div"); bar2.style.marginTop="6px";
+      bar2.appendChild(save); bar2.appendChild(msg);
+      body.appendChild(bar2);
+    }
+    if(b.textbox==="list") body.appendChild(listBox);
+  }
+
   makeCollapsible(body,btn,true);
   return card;
 }
@@ -301,12 +378,9 @@ function drawWorksheet(w){
   // ---- header card ----
   var head=el("div","card");
   var hd=el("div","cardhead");
-  var idx=1; // position shown in list handled separately
-  var title=el("h2",null,esc(w.title));
-  hd.appendChild(title);
+  hd.appendChild(el("h2",null,esc(w.title)));
 
   var right=el("div"); right.style.cssText="display:flex;gap:6px;align-items:center;flex-wrap:wrap;";
-  // attempt selector
   var sel=document.createElement("select"); sel.style.width="auto";
   if(!attempts.length){ sel.innerHTML='<option>Attempt 1 (new)</option>'; }
   else attempts.forEach(function(a,i){
@@ -314,14 +388,10 @@ function drawWorksheet(w){
   });
   sel.onchange=function(){ curAttemptId=sel.value; drawWorksheet(w); };
   right.appendChild(sel);
-
+  if(!readOnly) right.appendChild(mkBtn("+ New attempt","",function(){ newAttempt(w); }));
+  if(w.gold) right.appendChild(el("span","gold",'<span class="dot"></span>'+w.gold));
   if(att.status==="good") right.appendChild(el("span","good","Good job ✓"));
   if(att.status==="ng")   right.appendChild(el("span","ng","Try again ✗"));
-  if(w.gold) right.appendChild(el("span","gold",'<span class="dot"></span>'+w.gold));
-  right.appendChild(mkBtn("⟳","",function(){ openWorksheet(w,w.id); }));
-  right.appendChild(mkBtn("Close ▴","",function(){
-    openWsId=null; $("openWorksheet").innerHTML=""; loadAssignments();
-  }));
   hd.appendChild(right);
   head.appendChild(hd);
 
@@ -363,17 +433,18 @@ function drawWorksheet(w){
       });
     };
     pw.appendChild(upBtn); pw.appendChild(fi); pw.appendChild(prev);
-    foot.appendChild(pw);
+    area.appendChild(pw);
   }
 
+  // ---- footer card: Save / Submit / Close only ----
+  var foot=el("div","card");
   var bar=el("div"); bar.style.cssText="display:flex;gap:6px;align-items:center;flex-wrap:wrap;";
   if(!readOnly){
     var msg=el("span","muted");
-    bar.appendChild(mkBtn("Save","",function(){ saveWork(w,inputs,pendingPhoto,false,msg); }));
+    bar.appendChild(mkBtn("Save","act",function(){ saveWork(w,inputs,pendingPhoto,false,msg); }));
     var submitLabel = w.gold ? ("Submit ✓ (+"+w.gold+" gold)") : "Submit ✓";
     bar.appendChild(mkBtn(submitLabel,"primary",function(){ saveWork(w,inputs,pendingPhoto,true,msg); }));
-    bar.appendChild(mkBtn("Start new attempt","",function(){ newAttempt(w); }));
-    bar.appendChild(mkBtn("Close ▴","",function(){
+    bar.appendChild(mkBtn("Close ▴","close",function(){
       openWsId=null; $("openWorksheet").innerHTML=""; loadAssignments();
     }));
     bar.appendChild(msg);
@@ -391,8 +462,6 @@ function renderQuestionCard(q,i,att,inputs){
   var label=q.label||("Question "+(i+1));
   head.appendChild(el("span","qnum",esc(label)+". "+esc(q.text||"")));
   var body=el("div");
-  var btn=mkBtn("Collapse ▴","");
-  head.appendChild(btn);
   card.appendChild(head); card.appendChild(body);
 
   // per-question embed
@@ -444,7 +513,6 @@ function renderQuestionCard(q,i,att,inputs){
     body.appendChild(c);
   }
 
-  makeCollapsible(body,btn, !answered);   // already-answered questions start collapsed
   if(answered) card.classList.add("done");
   return card;
 }
@@ -555,4 +623,25 @@ function exportCSV(){
     });
     downloadCSV(rows,"my-answers.csv");
   }).catch(handleErr("Export failed"));
+}
+
+
+// gear on each fixed panel so every box can be tinted
+function addPanelGears(){
+  var tints=meData.boxTints||{};
+  function gearFor(key, cardEl){
+    if(!cardEl) return;
+    var head=cardEl.querySelector(".cardhead");
+    if(!head) return;
+    addBoxGear(head, cardEl, tints[key], function(c){
+      var t=Object.assign({},meData.boxTints||{}); t[key]=c;
+      meData.boxTints=t;
+      if(!readOnly) studentsCol.doc(ME).set({boxTints:t},{merge:true});
+    });
+  }
+  gearFor("profile", $("myAvatar").closest(".card"));
+  gearFor("game", $("gamePanel"));
+  gearFor("wordlist", $("wordPanel"));
+  gearFor("ask", $("askCard"));
+  gearFor("assigned", $("assignedList").closest(".card"));
 }

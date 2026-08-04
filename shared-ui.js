@@ -34,7 +34,7 @@ function applyBackground(bg, opacity){
   b.classList.remove("has-bgimage");
   b.style.removeProperty("--bgcolor");
   b.style.removeProperty("--bgimage");
-  b.style.setProperty("--bgopacity", (opacity==null?90:opacity)/100);
+  b.style.setProperty("--bgopacity", Math.min(80,(opacity==null?80:opacity))/100);
   if(!bg) return;
   if(bg.charAt(0)==="#"){ b.style.setProperty("--bgcolor", bg); }
   else { b.style.setProperty("--bgimage","url('"+bg+"')"); b.classList.add("has-bgimage"); }
@@ -70,7 +70,11 @@ function wireTabs(){
 // ---- collapsible section helper ----
 function makeCollapsible(bodyEl, btn, startOpen){
   var open = startOpen!==false;
-  function paint(){ bodyEl.classList.toggle("hidden",!open); btn.textContent = open?"Collapse ▴":"Open ▾"; }
+  function paint(){
+    bodyEl.classList.toggle("hidden",!open);
+    btn.textContent = open?"Close ▴":"Open ▾";
+    btn.className = open?"close":"";
+  }
   btn.onclick=function(){ open=!open; paint(); };
   paint();
 }
@@ -270,4 +274,151 @@ function showErr(msg, where){
 }
 function handleErr(prefix){
   return function(e){ showErr(prefix+": "+(e&&e.message?e.message:e)); console.error(prefix,e); };
+}
+
+
+// ============================================================
+//  Per-box tinting + wordlist (shared by student & teacher)
+// ============================================================
+var BOX_TINTS=["#ffffff","#eef6ef","#fdf0f5","#eef3fb","#fbf6e9","#f3eefb","#f7f0e8"];
+
+// Adds a small gear to a card head that lets you tint that card.
+// saveFn(color) persists it; current is the stored colour.
+function addBoxGear(headEl, cardEl, current, saveFn){
+  var gear=mkBtn("⚙","boxgear");
+  var bar=el("div","tintbar"); bar.classList.add("hidden");
+  BOX_TINTS.forEach(function(c){
+    var b=mkBtn("","sw",function(){
+      cardEl.style.background=c;
+      bar.classList.add("hidden");
+      if(saveFn) saveFn(c);
+    });
+    b.style.background=c;
+    bar.appendChild(b);
+  });
+  gear.onclick=function(){ bar.classList.toggle("hidden"); };
+  headEl.appendChild(gear);
+  cardEl.insertBefore(bar, cardEl.children[1]||null);
+  if(current) cardEl.style.background=current;
+  return gear;
+}
+
+// Wordlist panel: reference embeds on top, then Word+Definition+tags+Save on one line.
+// refs = [{label,url,mode}] configured by the teacher.
+function buildWordlist(container, colRef, refs, readOnly){
+  container.innerHTML="";
+  var sortAZ=false, search="", activeTag="", cache=[];
+
+  // ---- reference embeds (teacher-configured) ----
+  if((refs||[]).length){
+    container.appendChild(el("p","muted","Reference:"));
+    refs.forEach(function(r){
+      if(!r.url) return;
+      container.appendChild(makeEmbed(r.label||"Reference", r.url, r.mode||"collapsible"));
+    });
+  }
+
+  // ---- one-line add ----
+  container.appendChild(el("p","muted","Add a word:"));
+  var line=el("div","wl-line");
+  var wIn=document.createElement("input"); wIn.type="text"; wIn.placeholder="Word";
+  wIn.style.cssText="flex:1;min-width:110px;";
+  var dIn=document.createElement("input"); dIn.type="text"; dIn.placeholder="Definition";
+  dIn.style.cssText="flex:2;min-width:150px;";
+  var tIn=document.createElement("input"); tIn.type="text"; tIn.placeholder="tags";
+  tIn.style.cssText="flex:1;min-width:80px;";
+  var msg=el("span","muted");
+  var saveBtn=mkBtn("Save","act",function(){
+    var w=(wIn.value||"").trim();
+    if(!w){ msg.textContent="Type a word first."; return; }
+    colRef.add({
+      word:w, definition:(dIn.value||"").trim(),
+      tags:(tIn.value||"").trim().toLowerCase().split(/[\s,]+/).filter(Boolean),
+      at:firebase.firestore.FieldValue.serverTimestamp()
+    }).then(function(){
+      wIn.value=""; dIn.value=""; tIn.value="";
+      msg.textContent="Saved ✓"; setTimeout(function(){msg.textContent="";},1400);
+      load();
+    }).catch(function(e){ msg.textContent="Could not save: "+e.message; });
+  });
+  if(readOnly) saveBtn.disabled=true;
+  line.appendChild(wIn); line.appendChild(dIn); line.appendChild(tIn); line.appendChild(saveBtn);
+  container.appendChild(line);
+  container.appendChild(msg);
+
+  // ---- search / sort ----
+  var bar=el("div","filterbar"); bar.style.marginTop="10px";
+  var sIn=document.createElement("input"); sIn.type="text";
+  sIn.placeholder="Search word, definition or tag…"; sIn.style.cssText="flex:1;min-width:150px;";
+  sIn.oninput=function(){ search=sIn.value.toLowerCase(); render(); };
+  bar.appendChild(sIn);
+  var sortBtn=mkBtn("Sort A–Z","",function(){
+    sortAZ=!sortAZ; sortBtn.textContent=sortAZ?"Newest first":"Sort A–Z"; render();
+  });
+  bar.appendChild(sortBtn);
+  bar.appendChild(mkBtn("⟳","",function(){ load(); }));
+  container.appendChild(bar);
+
+  var chipBar=el("div"); chipBar.style.marginBottom="6px";
+  container.appendChild(chipBar);
+  var listBox=el("div");
+  container.appendChild(listBox);
+
+  function renderChips(){
+    var set={};
+    cache.forEach(function(r){ (r.tags||[]).forEach(function(t){ set[t]=1; }); });
+    var tags=Object.keys(set).sort();
+    chipBar.innerHTML="";
+    if(!tags.length) return;
+    chipBar.appendChild(el("span","muted","tags: "));
+    tags.forEach(function(t){
+      var chip=el("span","tag"+(activeTag===t?" on":""),esc(t));
+      chip.onclick=function(){ activeTag=(activeTag===t?"":t); render(); };
+      chipBar.appendChild(chip);
+    });
+  }
+
+  function matches(r){
+    if(activeTag && (r.tags||[]).indexOf(activeTag)<0) return false;
+    if(!search) return true;
+    return ((r.word||"")+" "+(r.definition||"")+" "+(r.tags||[]).join(" "))
+      .toLowerCase().indexOf(search)>=0;
+  }
+
+  function render(){
+    renderChips();
+    var rows=cache.filter(matches);
+    if(sortAZ) rows.sort(function(a,b){
+      return (a.word||"").toLowerCase().localeCompare((b.word||"").toLowerCase()); });
+    else rows.sort(function(a,b){
+      var x=a.at&&a.at.toMillis?a.at.toMillis():0, y=b.at&&b.at.toMillis?b.at.toMillis():0; return y-x; });
+    listBox.innerHTML="";
+    if(!rows.length){ listBox.innerHTML='<p class="muted">No words yet.</p>'; return; }
+    rows.forEach(function(r){
+      var row=el("div","wl-row");
+      var top=el("div");
+      top.style.cssText="display:flex;justify-content:space-between;gap:8px;align-items:flex-start;";
+      var txt=el("div");
+      txt.innerHTML='<span class="wl-word">'+esc(r.word)+'</span>'+
+        (r.definition?' — '+esc(r.definition):'')+' ';
+      (r.tags||[]).forEach(function(t){ txt.appendChild(el("span","tag",esc(t))); });
+      top.appendChild(txt);
+      if(!readOnly){
+        top.appendChild(mkBtn("✕","del",function(){
+          if(confirm('Delete "'+r.word+'"?')) colRef.doc(r.id).delete().then(load);
+        }));
+      }
+      row.appendChild(top);
+      listBox.appendChild(row);
+    });
+  }
+
+  function load(){
+    colRef.limit(500).get().then(function(snap){
+      cache=[]; snap.forEach(function(d){ cache.push(Object.assign({id:d.id},d.data())); });
+      render();
+    }).catch(function(){ listBox.innerHTML='<p class="muted">Could not load wordlist.</p>'; });
+  }
+  load();
+  return {reload:load};
 }

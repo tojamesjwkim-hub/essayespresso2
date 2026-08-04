@@ -27,11 +27,12 @@
           <span class="muted">· teacher</span><br>
           <span class="muted" id="myEmail"></span></div>
       </div>
-      <div>
-        <button id="gameBtn">Game</button>
+      <div class="btnbar">
+        <button class="fun" id="gameBtn">Game</button>
+        <button class="fun" id="wordBtn">Wordlist</button>
         <button id="profBtn">Profile</button>
-        <button id="apBtn">⚙ Appearance</button>
-        <button id="logoutBtn">Log out</button>
+        <button id="apBtn">⚙</button>
+        <button class="out" id="logoutBtn">Log out</button>
       </div>
     </div>
   </div>
@@ -42,20 +43,25 @@
     <p class="muted">The mini-game will live here.</p>
   </div>
 
+  <div id="wordPanel" class="card hidden">
+    <div class="cardhead"><h2>Wordlist</h2><button id="wordClose" class="close">Close ▴</button></div>
+    <div id="wordBody"></div>
+  </div>
+
   <div id="apPanel" class="card fill hidden">
     <h2>Appearance</h2>
     <p class="muted">Background colour:</p><div id="apSwatches" style="margin-bottom:6px;"></div>
     <p class="muted">…or image URL:</p><input id="apBg" type="text" placeholder="#c9dcf0 or https://…">
     <p class="muted" style="margin-top:8px;">Opacity — <span id="apOpVal">90</span>% (max 90)</p>
     <input id="apOpacity" type="range" min="0" max="90" value="90" style="width:100%;">
-    <div style="margin-top:10px;"><button class="primary" id="apSave">Save</button><button id="apCancel">Cancel</button></div>
+    <div style="margin-top:10px;"><button class="act" id="apSave">Save</button><button id="apCancel">Cancel</button></div>
   </div>
 
   <div class="tabs">
-    <div class="tab active" data-panel="students">Students</div>
-    <div class="tab" data-panel="questions">Questions <span id="qBadge" class="badge hidden">0</span></div>
+    <div class="tab active" data-panel="students">Approve</div>
+    <div class="tab" data-panel="questions">Answer <span id="qBadge" class="badge hidden">0</span></div>
+    <div class="tab" data-panel="mark">Mark</div>
     <div class="tab" data-panel="worksheets">Worksheets</div>
-    <div class="tab" data-panel="goldset">Gold settings</div>
     <div class="tab" data-panel="goldlog">Gold log</div>
     <div class="tab" data-panel="boxes">Student boxes</div>
     <div class="tab" data-panel="feedback">Parent feedback</div>
@@ -85,12 +91,24 @@
     <div id="questionList"><p class="muted">Loading…</p></div>
   </div>
 
+  <!-- MARK -->
+  <div class="panel" id="mark">
+    <h2>Mark student work</h2>
+    <div class="filterbar">
+      <span class="muted">Student:</span>
+      <select id="markStudent" style="min-width:180px;"><option value="">— pick a student —</option></select>
+      <label><input type="checkbox" id="markUnmarkedOnly" checked style="width:auto;"> unmarked only</label>
+      <button id="markLoad" class="act">Load</button>
+    </div>
+    <div id="markArea"><p class="muted">Pick a student and press Load.</p></div>
+  </div>
+
   <!-- WORKSHEETS -->
   <div class="panel" id="worksheets">
     <h2>Worksheets</h2>
     <div class="filterbar">
       <input id="newWsTitle" type="text" placeholder="New worksheet title…" style="flex:1;min-width:170px;">
-      <button class="primary" id="createWsBtn">+ Create</button>
+      <button class="act" id="createWsBtn">+ Create</button>
       <button id="importCsvBtn">⬆ Import CSV</button>
       <button id="exportWsCsvBtn">⬇ Export CSV</button>
       <button id="templateBtn">CSV template</button>
@@ -104,23 +122,16 @@
     </div>
     <p class="muted" style="margin:0 0 8px;">Tags are yours only — students never see them.</p>
     <div id="wsList"></div>
-  </div>
 
-  <!-- GOLD SETTINGS -->
-  <div class="panel" id="goldset">
-    <h2>Gold per worksheet</h2>
-    <div id="goldSetList"></div>
     <h2 style="margin-top:20px;">My own gold (play-testing)</h2>
     <div class="card fill">
       <p style="margin:0 0 7px;">Your balance: <span class="gold"><span class="dot"></span><span id="myGold2">0</span> gold</span></p>
       <div class="filterbar">
         <span class="muted">Set to:</span>
         <input id="teacherGoldInput" type="number" min="0" max="99999" style="width:100px;">
-        <button class="primary" id="setTeacherGold">Set</button>
-        <button data-add="100">+100</button>
-        <button data-add="1000">+1000</button>
-        <button id="maxGold">Max (99999)</button>
-        <button id="zeroGold">Zero</button>
+        <button class="act" id="setTeacherGold">Set</button>
+        <button data-add="100">+100</button><button data-add="1000">+1000</button>
+        <button id="maxGold">Max (99999)</button><button id="zeroGold">Zero</button>
       </div>
       <p class="muted" style="margin:6px 0 0;">Your gold never appears in the student log.</p>
     </div>
@@ -150,7 +161,7 @@
     <p class="muted">A student sees no boxes unless you create one and assign it.</p>
     <div class="filterbar">
       <input id="newBoxTitle" type="text" placeholder="New box title…" style="flex:1;min-width:170px;">
-      <button class="primary" id="createBoxBtn">+ Create box</button>
+      <button class="act" id="createBoxBtn">+ Create box</button>
     </div>
     <div id="boxList"></div>
   </div>
@@ -165,10 +176,10 @@
         <select id="fbStudent" style="min-width:150px;"></select>
         <span class="muted">Template:</span>
         <select id="fbTemplate" style="min-width:160px;"><option value="">— none —</option></select>
-        <button id="fbInsert">Insert</button>
+        <button class="act" id="fbInsert">Insert</button>
       </div>
       <div id="fbEditorHolder"></div>
-      <div style="margin-top:8px;"><button class="primary" id="fbPost">Post note (timestamped)</button>
+      <div style="margin-top:8px;"><button class="act" id="fbPost">Post note (timestamped)</button>
         <span id="fbMsg" class="muted"></span></div>
     </div>
 
@@ -176,7 +187,7 @@
     <div id="templateList"></div>
     <div class="filterbar" style="margin-top:8px;">
       <input id="newTemplateName" type="text" placeholder="New template name…" style="flex:1;min-width:170px;">
-      <button class="primary" id="createTemplate">+ New template</button>
+      <button class="act" id="createTemplate">+ New template</button>
     </div>
 
     <h2 style="margin-top:18px;">Posted notes</h2>
@@ -209,11 +220,17 @@
     <p class="muted">Shown at the top of every parent's page.</p>
     <textarea id="pBlurb" style="min-height:50px;"></textarea>
 
+    <h2 style="margin-top:18px;">Wordlist reference embeds</h2>
+    <p class="muted">Collapsible embeds shown ABOVE the word/definition line, for everyone.
+      One per line as <code>Label | URL | open</code> or <code>Label | URL | collapsible</code>.</p>
+    <textarea id="pWordRefs" style="min-height:70px;" placeholder="Dictionary | https://… | collapsible"></textarea>
+    <p class="muted">Note: some sites block embedding. Google Docs you own always work.</p>
+
     <h2 style="margin-top:18px;">Backup</h2>
-    <button class="primary" id="exportAllBtn">⬇ Export ALL (JSON)</button>
+    <button class="act" id="exportAllBtn">⬇ Export ALL (JSON)</button>
     <button id="exportAnswersCsv">⬇ All answers (CSV)</button>
 
-    <div style="margin-top:14px;"><button class="primary" id="saveProfileBtn">Save profile</button>
+    <div style="margin-top:14px;"><button class="act" id="saveProfileBtn">Save profile</button>
       <span id="profileSaved" class="muted"></span></div>
   </div>
 </div>

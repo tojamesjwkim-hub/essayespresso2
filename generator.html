@@ -29,7 +29,7 @@
       <label><input type="checkbox" id="everyAttempt" checked style="width:auto;"> Use every attempt — each becomes one new question</label></p>
     <p style="margin-top:10px;"><strong>New worksheet name:</strong>
       <input id="newName" type="text" style="max-width:300px;"></p>
-    <button class="primary" id="previewBtn">Preview →</button>
+    <button class="act" id="previewBtn">Preview →</button>
   </div>
 
   <div id="previewArea"></div>
@@ -168,7 +168,7 @@ function renderPreview(){
   nameRow.appendChild(mode);
   actions.appendChild(nameRow);
   var msg=el("span","muted");
-  actions.appendChild(mkBtn("Create","primary",function(){ create(mode.value,msg); }));
+  actions.appendChild(mkBtn("Create","act",function(){ create(mode.value,msg); }));
   actions.appendChild(mkBtn("Cancel","",function(){ $("previewArea").innerHTML=""; }));
   actions.appendChild(msg);
   area.appendChild(actions);

@@ -18,7 +18,7 @@
     <span class="muted">Worksheet:</span>
     <select id="wsFilter" style="min-width:150px;"><option value="">All worksheets</option></select>
     <label><input type="checkbox" id="onlySubmitted" style="width:auto;"> only submitted</label>
-    <button class="primary" id="loadBtn">Load</button>
+    <button class="act" id="loadBtn">Load</button>
   </div>
   <div id="list"><p class="muted">Choose filters and press Load.</p></div>
 </div>
@@ -147,7 +147,7 @@ function card(student,ws,att){
 
   var msg=el("span","muted");
   var actions=el("div");
-  actions.appendChild(mkBtn("Save","primary",function(){
+  actions.appendChild(mkBtn("Save","act",function(){
     var resp=Object.assign({},responses);
     respEditors.forEach(function(r){ resp[r.i]=r.get(); });
     var cmt={};
@@ -157,7 +157,7 @@ function card(student,ws,att){
       .then(function(){ msg.textContent="Saved ✓"; setTimeout(function(){msg.textContent="";},2000); })
       .catch(handleErr("Could not save"));
   }));
-  actions.appendChild(mkBtn("Delete attempt","",function(){
+  actions.appendChild(mkBtn("Delete attempt","del",function(){
     if(!confirm("Delete this attempt?")) return;
     studentsCol.doc(student.uid).collection("answers").doc(ws.id).collection("attempts").doc(att.id)
       .delete().then(load).catch(handleErr("Could not delete"));

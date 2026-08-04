@@ -34,6 +34,11 @@
     </div>
 
     <div class="card">
+      <div class="cardhead"><h2 id="qaHeading">Questions &amp; answers</h2><button id="qaToggle" class="close">Close ▴</button></div>
+      <div id="qaBody"><p class="muted">Loading…</p></div>
+    </div>
+
+    <div class="card">
       <div class="cardhead">
         <div style="display:flex;align-items:center;gap:9px;">
           <span id="kidAvatar" class="avatar"></span>
@@ -128,7 +133,8 @@ function choose(k){
   $("logoutBtn").onclick=logout;
   $("refreshBtn").onclick=function(){ loadWork(); };
   makeCollapsible($("fbBody"),$("fbToggle"),true);
-  loadFeedback(); loadWork();
+  makeCollapsible($("qaBody"),$("qaToggle"),true);
+  loadFeedback(); loadQA(); loadWork();
 }
 
 function loadFeedback(){
@@ -146,6 +152,28 @@ function loadFeedback(){
       box.appendChild(d);
     });
   }).catch(function(e){ $("fbBody").innerHTML='<p class="muted">Could not load notes.</p>'; });
+}
+
+function loadQA(){
+  studentsCol.doc(kid.uid).collection("questions").limit(100).get().then(function(snap){
+    var rows=[]; snap.forEach(function(d){ rows.push(d.data()); });
+    rows.sort(function(a,b){
+      var x=a.createdAt&&a.createdAt.toMillis?a.createdAt.toMillis():0,
+          y=b.createdAt&&b.createdAt.toMillis?b.createdAt.toMillis():0;
+      return y-x;
+    });
+    var box=$("qaBody"); box.innerHTML="";
+    box.appendChild(el("p","muted","Everything "+esc(kid.name||"they")+" has asked, and "+esc(tName())+"'s replies. Newest first."));
+    if(!rows.length){ box.appendChild(el("p","muted","No questions asked yet.")); return; }
+    rows.forEach(function(r){
+      var d=el("div","comment");
+      d.innerHTML="<strong>"+esc(fmtTime(r.createdAt))+"</strong> — "+esc(kid.name||"Student")+
+        " asked: "+esc(r.text||"");
+      if(r.reply) d.innerHTML+="<br><strong>"+esc(tName())+" says…</strong> "+esc(r.reply);
+      else d.innerHTML+='<br><span class="muted">(not yet answered)</span>';
+      box.appendChild(d);
+    });
+  }).catch(function(){ $("qaBody").innerHTML='<p class="muted">Could not load questions.</p>'; });
 }
 
 function loadWork(){

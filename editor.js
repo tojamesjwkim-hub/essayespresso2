@@ -74,7 +74,7 @@ function qCard(q,i){
   var ctr=el("div");
   ctr.appendChild(mkBtn("▲","arrow",function(){ move(i,-1); }));
   ctr.appendChild(mkBtn("▼","arrow",function(){ move(i,1); }));
-  ctr.appendChild(mkBtn("Delete","",function(){ questions.splice(i,1); renderQuestions(); }));
+  ctr.appendChild(mkBtn("Delete","del",function(){ questions.splice(i,1); renderQuestions(); }));
   head.appendChild(ctr);
   card.appendChild(head);
 
