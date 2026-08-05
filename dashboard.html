@@ -4,9 +4,9 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Teacher Dashboard</title>
-<link rel="stylesheet" href="style.css">
+<link rel="stylesheet" href="style.css?v=3">
 </head>
-<body>
+<body class="teacher">
 <div id="runnerTop" class="runner"></div>
 
 <div class="wrap">
@@ -27,24 +27,24 @@
           <span class="muted">· teacher</span><br>
           <span class="muted" id="myEmail"></span></div>
       </div>
-      <div class="btnbar">
+      <div class="ctrls"><div class="btnbar">
         <button class="fun" id="gameBtn">Game</button>
         <button class="fun" id="wordBtn">Wordlist</button>
         <button id="profBtn">Profile</button>
         <button id="apBtn">⚙</button>
         <button class="out" id="logoutBtn">Log out</button>
-      </div>
+      </div></div>
     </div>
   </div>
 
   <div id="gamePanel" class="card hidden">
-    <div class="cardhead"><h2>Game (play-test)</h2><button id="gameClose">Close ▴</button></div>
+    <div class="cardhead"><h2>Game (play-test)</h2><span class="ctrls"><button id="gameClose" class="close">Close ▴</button></span></div>
     <p style="margin-top:8px;">Your gold: <strong id="gameGold">0</strong></p>
     <p class="muted">The mini-game will live here.</p>
   </div>
 
   <div id="wordPanel" class="card hidden">
-    <div class="cardhead"><h2>Wordlist</h2><button id="wordClose" class="close">Close ▴</button></div>
+    <div class="cardhead"><h2>Wordlist</h2><span class="ctrls"><button id="wordClose" class="close">Close ▴</button></span></div>
     <div id="wordBody"></div>
   </div>
 
@@ -218,12 +218,12 @@
 
     <h2 style="margin-top:18px;">Parent page blurb</h2>
     <p class="muted">Shown at the top of every parent's page.</p>
-    <textarea id="pBlurb" style="min-height:50px;"></textarea>
+    <textarea spellcheck="true" id="pBlurb" style="min-height:50px;"></textarea>
 
     <h2 style="margin-top:18px;">Wordlist reference embeds</h2>
     <p class="muted">Collapsible embeds shown ABOVE the word/definition line, for everyone.
       One per line as <code>Label | URL | open</code> or <code>Label | URL | collapsible</code>.</p>
-    <textarea id="pWordRefs" style="min-height:70px;" placeholder="Dictionary | https://… | collapsible"></textarea>
+    <textarea spellcheck="true" id="pWordRefs" style="min-height:70px;" placeholder="Dictionary | https://… | collapsible"></textarea>
     <p class="muted">Note: some sites block embedding. Google Docs you own always work.</p>
 
     <h2 style="margin-top:18px;">Backup</h2>
@@ -240,8 +240,8 @@
 <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-auth-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore-compat.js"></script>
-<script src="config.js"></script>
-<script src="shared-ui.js"></script>
-<script src="dashboard.js"></script>
+<script src="config.js?v=3"></script>
+<script src="shared-ui.js?v=3"></script>
+<script src="dashboard.js?v=3"></script>
 </body>
 </html>

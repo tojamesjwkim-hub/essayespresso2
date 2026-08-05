@@ -224,13 +224,14 @@ function renderBox(b){
   head.appendChild(el("h2",null,esc(b.title||"")));
   var body=el("div");
   var btn=mkBtn("","");
-  head.appendChild(btn);
+  ctrlsOf(head).appendChild(btn);
   card.appendChild(head); card.appendChild(body);
 
   addBoxGear(head, card, (meData.boxTints||{})["box_"+b.id], function(c){
     var t=Object.assign({},meData.boxTints||{}); t["box_"+b.id]=c;
     meData.boxTints=t;
-    if(!readOnly) studentsCol.doc(ME).set({boxTints:t},{merge:true});
+    if(!readOnly) studentsCol.doc(ME).set({boxTints:t},{merge:true})
+      .catch(function(e){ showErr("Colour didn't save: "+e.message+" (check Firestore rules allow boxTints)"); });
   });
 
   if(b.text){ var p=el("p"); p.style.margin="8px 0 4px"; p.textContent=b.text; body.appendChild(p); }
@@ -242,7 +243,7 @@ function renderBox(b){
   // optional free text box for the student
   if(b.textbox && b.textbox!=="off"){
     body.appendChild(el("p","muted","Your notes:"));
-    var ta=document.createElement("textarea"); ta.style.minHeight="60px";
+    var ta=document.createElement("textarea"); ta.style.minHeight="60px"; ta.setAttribute("spellcheck","true");
     var noteRef=studentsCol.doc(ME).collection("boxnotes").doc(b.id);
     var msg=el("span","muted");
     var listBox=el("div");
@@ -380,7 +381,7 @@ function drawWorksheet(w){
   var hd=el("div","cardhead");
   hd.appendChild(el("h2",null,esc(w.title)));
 
-  var right=el("div"); right.style.cssText="display:flex;gap:6px;align-items:center;flex-wrap:wrap;";
+  var right=el("div","ctrls");
   var sel=document.createElement("select"); sel.style.width="auto";
   if(!attempts.length){ sel.innerHTML='<option>Attempt 1 (new)</option>'; }
   else attempts.forEach(function(a,i){
@@ -442,8 +443,12 @@ function drawWorksheet(w){
   if(!readOnly){
     var msg=el("span","muted");
     bar.appendChild(mkBtn("Save","act",function(){ saveWork(w,inputs,pendingPhoto,false,msg); }));
-    var submitLabel = w.gold ? ("Submit ✓ (+"+w.gold+" gold)") : "Submit ✓";
-    bar.appendChild(mkBtn(submitLabel,"primary",function(){ saveWork(w,inputs,pendingPhoto,true,msg); }));
+    var already = !!att.goldAwarded;
+    var submitLabel = already ? "Submit ✓ (already earned)"
+      : (w.gold ? ("Submit ✓ (+"+w.gold+" gold)") : "Submit ✓");
+    var subBtn=mkBtn(submitLabel,"primary",function(){ saveWork(w,inputs,pendingPhoto,true,msg); });
+    if(already) subBtn.title="This attempt already earned its gold — start a new attempt to earn again.";
+    bar.appendChild(subBtn);
     bar.appendChild(mkBtn("Close ▴","close",function(){
       openWsId=null; $("openWorksheet").innerHTML=""; loadAssignments();
     }));
@@ -545,9 +550,16 @@ function saveWork(w,inputs,pendingPhoto,isSubmit,msg){
   }
   p.then(function(attemptId){
     if(!isSubmit){ if(msg) flash(msg,"Saved ✓"); return; }
+    var thisAtt=attempts.filter(function(a){return a.id===attemptId;})[0]||{};
+    var alreadyPaid=!!thisAtt.goldAwarded;
     return col.doc(attemptId).set({
       submitted:true, submittedAt:firebase.firestore.FieldValue.serverTimestamp()
-    },{merge:true}).then(function(){ return awardGold(w,attemptId,msg); });
+    },{merge:true}).then(function(){
+      if(alreadyPaid){ if(msg) flash(msg,"Submitted ✓ (gold already earned)"); return; }
+      return awardGold(w,attemptId,msg).then(function(){
+        return col.doc(attemptId).set({goldAwarded:true},{merge:true});
+      });
+    });
   }).then(function(){ openWorksheet(w,w.id); })
     .catch(handleErr("Could not save"));
 }
@@ -636,7 +648,8 @@ function addPanelGears(){
     addBoxGear(head, cardEl, tints[key], function(c){
       var t=Object.assign({},meData.boxTints||{}); t[key]=c;
       meData.boxTints=t;
-      if(!readOnly) studentsCol.doc(ME).set({boxTints:t},{merge:true});
+      if(!readOnly) studentsCol.doc(ME).set({boxTints:t},{merge:true})
+        .catch(function(e){ showErr("Colour didn't save: "+e.message+" (check Firestore rules allow boxTints)"); });
     });
   }
   gearFor("profile", $("myAvatar").closest(".card"));

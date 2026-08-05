@@ -18,7 +18,10 @@ approve them.
 ## 3. Firestore rules — REPLACE EVERYTHING with this
 Firebase → **Firestore** → **Rules** tab → paste → **Publish**.
 
-**What's new in this version:** parent viewing now works (the `viewerOfThisDoc`
+**NEW THIS VERSION — you must re-publish:** `boxTints` added to the keys a
+student may write (without it, per-box colours silently fail to save).
+
+**Previously:** parent viewing now works (the `viewerOfThisDoc`
 function — the old `get()` version silently failed for queries, which is why
 parents saw the pending screen), plus wordlist and box-notes collections.
 
@@ -110,7 +113,7 @@ service cloud.firestore {
       allow update: if isTeacher()
         || (isSelf(uid)
             && request.resource.data.diff(resource.data).affectedKeys()
-                 .hasOnly(['name','photo','bg','opacity','gold']));
+                 .hasOnly(['name','photo','bg','opacity','gold','boxTints']));
       allow delete: if isTeacher();
 
       match /assignments/{wsId} {

@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Progress</title>
-<link rel="stylesheet" href="style.css">
+<link rel="stylesheet" href="style.css?v=3">
 </head>
 <body>
 <div id="runnerTop" class="runner"></div>
@@ -29,12 +29,12 @@
     <div id="blurb" class="blurb"></div>
 
     <div class="card">
-      <div class="cardhead"><h2 id="fbHeading">Feedback summary</h2><button id="fbToggle">Collapse ▴</button></div>
+      <div class="cardhead"><h2 id="fbHeading">Feedback summary</h2><span class="ctrls"><button id="fbToggle" class="close">Close ▴</button></span></div>
       <div id="fbBody"><p class="muted">Loading…</p></div>
     </div>
 
     <div class="card">
-      <div class="cardhead"><h2 id="qaHeading">Questions &amp; answers</h2><button id="qaToggle" class="close">Close ▴</button></div>
+      <div class="cardhead"><h2 id="qaHeading">Questions &amp; answers</h2><span class="ctrls"><button id="qaToggle" class="close">Close ▴</button></span></div>
       <div id="qaBody"><p class="muted">Loading…</p></div>
     </div>
 
@@ -52,7 +52,7 @@
     </div>
 
     <div class="card">
-      <div class="cardhead"><h2 id="workHeading">Assigned work</h2><button id="refreshBtn">⟳</button></div>
+      <div class="cardhead"><h2 id="workHeading">Assigned work</h2><span class="ctrls"><button id="refreshBtn">⟳</button></span></div>
       <div id="workList" style="margin-top:8px;"></div>
     </div>
 
@@ -65,8 +65,8 @@
 <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-auth-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore-compat.js"></script>
-<script src="config.js"></script>
-<script src="shared-ui.js"></script>
+<script src="config.js?v=3"></script>
+<script src="shared-ui.js?v=3"></script>
 <script>
 var VIEWER=null, kids=[], kid=null, teacherProfile={}, openWsId=null;
 

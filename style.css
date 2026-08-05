@@ -67,6 +67,8 @@ label{cursor:pointer}
 .card{border:1px solid var(--ink);background:var(--paper);padding:12px;margin-bottom:10px}
 .card.fill{background:var(--fill)}
 .cardhead{display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap}
+/* all header controls in one group, pushed hard right */
+.ctrls{display:flex;gap:5px;align-items:center;margin-left:auto;flex-wrap:wrap}
 .row{border:1px solid var(--ink);background:var(--paper);padding:8px 11px;margin-bottom:8px;
   display:flex;justify-content:space-between;align-items:center;gap:9px;flex-wrap:wrap}
 .row .left{flex:1;min-width:200px}
@@ -165,3 +167,9 @@ button.fun:hover{background:#f8e9b4}
 
 /* wordlist one-line entry */
 .wl-line{display:flex;gap:6px;align-items:center;flex-wrap:wrap}
+
+/* teacher dashboard: slightly grey cards so white inputs stand out */
+body.teacher .card{background:#f2f2f2}
+body.teacher .card.fill{background:#e9e9e9}
+body.teacher .row{background:#fff}
+body.teacher table{background:#fff}

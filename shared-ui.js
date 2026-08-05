@@ -125,6 +125,7 @@ function makeRichEditor(initialHTML, placeholder){
   var tb=el("div","tb");
   var box=el("div","rich");
   box.contentEditable="true";
+  box.setAttribute("spellcheck","true");
   box.innerHTML=initialHTML||"";
   if(placeholder) box.setAttribute("data-ph",placeholder);
   function cmd(c){ return function(){ document.execCommand(c,false,null); box.focus(); }; }
@@ -284,6 +285,11 @@ var BOX_TINTS=["#ffffff","#eef6ef","#fdf0f5","#eef3fb","#fbf6e9","#f3eefb","#f7f
 
 // Adds a small gear to a card head that lets you tint that card.
 // saveFn(color) persists it; current is the stored colour.
+function ctrlsOf(headEl){
+  var c=headEl.querySelector(".ctrls");
+  if(!c){ c=el("div","ctrls"); headEl.appendChild(c); }
+  return c;
+}
 function addBoxGear(headEl, cardEl, current, saveFn){
   var gear=mkBtn("⚙","boxgear");
   var bar=el("div","tintbar"); bar.classList.add("hidden");
@@ -297,7 +303,7 @@ function addBoxGear(headEl, cardEl, current, saveFn){
     bar.appendChild(b);
   });
   gear.onclick=function(){ bar.classList.toggle("hidden"); };
-  headEl.appendChild(gear);
+  ctrlsOf(headEl).appendChild(gear);
   cardEl.insertBefore(bar, cardEl.children[1]||null);
   if(current) cardEl.style.background=current;
   return gear;

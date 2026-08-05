@@ -552,7 +552,7 @@ function renderBoxes(list){
     var ti=document.createElement("input"); ti.type="text"; ti.value=b.title||"";
     card.appendChild(ti);
     card.appendChild(el("p","muted","Text"));
-    var tx=document.createElement("textarea"); tx.value=b.text||""; tx.style.minHeight="40px";
+    var tx=document.createElement("textarea"); tx.value=b.text||""; tx.style.minHeight="40px"; tx.setAttribute("spellcheck","true");
     card.appendChild(tx);
 
     card.appendChild(el("p","muted","Items — each a link or an embedded doc:"));
@@ -841,7 +841,7 @@ function loadMark(){
         head.appendChild(t);
         var body=el("div");
         var btn=mkBtn("","");
-        head.appendChild(btn);
+        ctrlsOf(head).appendChild(btn);
         card.appendChild(head); card.appendChild(body);
 
         if(!show.length){
