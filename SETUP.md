@@ -1,34 +1,21 @@
-# EssayEspresso — Setup
+# EssayEspresso — setup
 
-Your tutoring worksheet app. Do these once; after that everything is done by
-clicking in the app.
+Practise a little, every day. A few short exercises, an optional game on top.
 
 ---
 
-## 1. Paste your Firebase keys (the ONLY file you edit)
-Firebase console → ⚙ Project settings → "Your apps" → web app → copy the config.
-Open **config.js** and replace the three `PASTE_ME` slots (`apiKey`,
-`authDomain`, `projectId`). Your teacher email is already set.
+## 1. Firebase (once)
 
-## 2. Turn on Google login
-Firebase → **Authentication** → Sign-in method → enable **Google**.
-No accounts to create by hand — people sign in and land in "pending" until you
-approve them.
+1. **Create a project** at console.firebase.google.com.
+2. **Authentication → Sign-in method → Google → Enable.**
+3. **Firestore Database → Create database** (production mode).
+4. **Project settings → Your apps → Web app.** Copy `apiKey`, `authDomain`, `projectId`
+   into the top of `config.js`.
+5. In `config.js`, check `TEACHER_EMAIL` is your Google address.
+6. **Authentication → Settings → Authorized domains → Add** your GitHub Pages domain
+   (e.g. `yourname.github.io`).
 
-## 3. Firestore rules — REPLACE EVERYTHING with this
-Firebase → **Firestore** → **Rules** tab → paste → **Publish**.
-
-**NEW THIS VERSION — you must re-publish:** `boxTints` added to the keys a
-student may write (without it, per-box colours silently fail to save).
-
-**Previously:** parent viewing now works (the `viewerOfThisDoc`
-function — the old `get()` version silently failed for queries, which is why
-parents saw the pending screen), plus wordlist and box-notes collections.
-
-**Earlier changes:** gold is teacher-writable only (students can't
-edit their own balance), students can create questions, parents get read-only
-access via the `viewers` list, and the gold log / feedback / templates
-collections are added.
+## 2. Security rules — paste ALL of this into Firestore → Rules → Publish
 
 ```
 rules_version = '2';
@@ -40,156 +27,152 @@ service cloud.firestore {
         && request.auth.token.email == 'tojamesjwkim@gmail.com'
         && request.auth.token.email_verified == true;
     }
-    function isSelf(uid) {
-      return request.auth != null && request.auth.uid == uid;
-    }
-    function studentDoc(uid) {
-      return get(/databases/$(database)/documents/students/$(uid)).data;
-    }
-    // a signed-in parent listed on that student's viewers[] — via get(), for
-    // sub-collection rules where we can't see the parent doc directly
-    function isViewer(uid) {
-      return request.auth != null
-        && exists(/databases/$(database)/documents/students/$(uid))
-        && studentDoc(uid).viewers is list
-        && studentDoc(uid).viewers.hasAny([request.auth.token.email.lower()]);
-    }
-    // same test but against the document being read — REQUIRED for queries
-    // (parent.html asks "which students list me?", which is a query)
-    function viewerOfThisDoc() {
-      return request.auth != null
-        && resource.data.viewers is list
-        && resource.data.viewers.hasAny([request.auth.token.email.lower()]);
-    }
     function isApproved() {
       return request.auth != null
         && exists(/databases/$(database)/documents/students/$(request.auth.uid))
-        && studentDoc(request.auth.uid).status == 'approved';
+        && get(/databases/$(database)/documents/students/$(request.auth.uid)).data.status == 'approved';
     }
+    function isMe(uid) { return request.auth != null && request.auth.uid == uid; }
 
     match /site/{doc} {
       allow read: if true;
       allow write: if isTeacher();
     }
-    match /teacher/{doc} {
+
+    match /teacher/profile {
       allow read: if request.auth != null;
       allow write: if isTeacher();
     }
-    match /teacher/{doc}/wordlist/{wid} {
-      allow read, write: if isTeacher();
-    }
-    match /worksheets/{wsId} {
-      allow read: if request.auth != null;
+
+    // Worksheets: approved students read all; guests read only public demos.
+    match /worksheets/{id} {
+      allow read: if isTeacher() || isApproved() || resource.data.publicDemo == true;
       allow write: if isTeacher();
     }
-    match /boxes/{boxId} {
-      allow read: if request.auth != null;
+
+    // Game content: approved students only (guests get nothing).
+    match /game/config {
+      allow read: if isTeacher() || isApproved();
       allow write: if isTeacher();
     }
-    match /goldlog/{id} {
-      allow read: if isTeacher();
-      // a student may log only their own award; teacher may log anything
-      allow create: if isTeacher()
-        || (isApproved() && request.resource.data.uid == request.auth.uid);
-      allow update, delete: if isTeacher();
-    }
-    match /feedback/{id} {
-      // teacher writes; parents read only their own child's notes
-      allow read: if isTeacher() || isViewer(resource.data.uid);
+    match /game/config/screens/{id} {
+      allow read: if isTeacher() || isApproved();
       allow write: if isTeacher();
     }
-    match /templates/{id} {
+    match /gamedrafts/{id} {
       allow read, write: if isTeacher();
     }
 
     match /students/{uid} {
-      allow read: if isTeacher() || isSelf(uid) || viewerOfThisDoc();
-      allow create: if isSelf(uid) && request.resource.data.status == 'pending';
-      // student may edit ONLY name / photo / bg / opacity.
-      // gold, status and viewers are teacher-only. Gold also increases via the
-      // submit flow, which is why 'gold' is allowed in the student key list but
-      // guarded: a student can only ever raise it, never set it arbitrarily low
-      // or high in one step is not enforced here — the log is your receipt.
+      // A signed-in person may create their own pending record.
+      allow create: if isMe(uid)
+        && request.resource.data.status == 'pending';
+      allow read: if isTeacher() || isMe(uid);
+      // Students may only change these fields; status/permissions are teacher-only.
       allow update: if isTeacher()
-        || (isSelf(uid)
-            && request.resource.data.diff(resource.data).affectedKeys()
-                 .hasOnly(['name','photo','bg','opacity','gold','boxTints']));
+        || (isMe(uid) && request.resource.data.diff(resource.data).affectedKeys()
+             .hasOnly(['name','photo','bg','opacity','tintProfile','tintPractice',
+                       'ap','streak','lastPracticeDay','lastSeen','lastSeenDay',
+                       'todayTitle','gameOn']));
       allow delete: if isTeacher();
 
       match /assignments/{wsId} {
-        allow read: if isTeacher() || isSelf(uid) || isViewer(uid);
-        allow create, delete: if isTeacher();
-        allow update: if isTeacher()
-          || (isSelf(uid)
-              && request.resource.data.diff(resource.data)
-                   .affectedKeys().hasOnly(['done','doneAt']));
+        allow read: if isTeacher() || isMe(uid);
+        allow write: if isTeacher() || isMe(uid);
       }
+      match /drafts/{wsId} {
+        allow read, write: if isTeacher() || isMe(uid);
+      }
+      match /archive/{wsId} {
+        allow read, write: if isTeacher() || isMe(uid);
+        match /rows/{rowId} {
+          allow read: if isTeacher() || isMe(uid);
+          allow create: if isTeacher() || isMe(uid);
+          allow update, delete: if isTeacher();
+        }
+      }
+      match /game/{docId} {
+        allow read, write: if isTeacher() || isMe(uid);
+      }
+    }
 
-      match /answers/{wsId}/attempts/{attemptId} {
-        allow read: if isTeacher() || isSelf(uid) || isViewer(uid);
-        allow write: if isTeacher() || isSelf(uid);
-      }
-
-      match /wordlist/{wid} {
-        allow read, write: if isTeacher() || isSelf(uid);
-      }
-
-      match /boxnotes/{bid} {
-        allow read: if isTeacher() || isSelf(uid) || isViewer(uid);
-        allow write: if isTeacher() || isSelf(uid);
-      }
-
-      match /questions/{qid} {
-        allow read: if isTeacher() || isSelf(uid) || isViewer(uid);
-        allow create, delete: if isTeacher() || isSelf(uid);
-        allow update: if isTeacher();   // only you write replies
-      }
+    match /aplog/{id} {
+      allow read: if isTeacher();
+      allow create: if request.auth != null;
+      allow update, delete: if isTeacher();
     }
   }
 }
 ```
 
-### One honest note on gold
-The rules let a student's own document update `gold` (that's how the Submit
-button awards it from the browser). A determined student could in principle
-raise their own gold. For a small tutoring practice that's an acceptable trade —
-and the **Gold log** is your receipt, since every legitimate award writes a log
-entry. If it ever matters, the fix is a Cloud Function; ask me then.
+**Re-publish these rules whenever you're told to.** Most "it silently didn't save"
+bugs are a rules problem.
 
-## 4. Authorise your web address
-Firebase → Authentication → Settings → **Authorized domains** → add your
-GitHub Pages domain (e.g. `tojamesjwkim.github.io`). Without this the Google
-popup is blocked on the live site.
+## 3. Deploy
 
-## 5. Put it online
-Push this folder to a **public** GitHub repo → Settings → Pages → Deploy from a
-branch → `main` / root. (Pages needs a public repo on the free plan.)
+Public GitHub repo → upload all files → Settings → Pages → Deploy from branch →
+`main` / root. Wait for the green tick, then open the URL.
 
----
+## 4. First run
 
-## Pages
-| File | What it is |
+1. Open the site, **Log in with Google** as the teacher address.
+   (If it says the email isn't verified, verify it with Google first.)
+2. **Categories & sources** — add a category or two. Tick *self-serve* for the ones
+   students may pick from.
+3. **Word sources** — in Google Sheets: File → Share → **Publish to web** → pick the tab →
+   **CSV** → copy the link. Paste it, name your columns (e.g. `A = words`, `B = meaning`),
+   press **Test**. It should say how many rows loaded.
+4. **Worksheets → + Create.** In the editor: set the archive columns, attach the source,
+   write a question using a token like `{satwords.words}`, and map answers to columns.
+5. **Approve** — students appear here after they try to log in. Approve them, then use
+   **Mark** to assign worksheets.
+
+## 5. The game (optional)
+
+**Game editor** (button on the *Student game* tab):
+
+- **Stats** first — Smarts, Strength, Gold, whatever you want.
+- **Items** next, if you'll use them.
+- **Screen map → + Add screen** for each place. Set the start screen on the Rules tab.
+- **Edit a screen** → add buttons to the pool, each with conditions, chance, effects.
+- **Endings** → one category per ending-page button; first match wins, so end with a catch-all.
+- **Convert** → what ✨ can be exchanged for.
+- **Rules & publish** → days per run, ✨ cost to skip a day, and **snapshots**.
+
+**Take a named snapshot before any big rewrite.** "Save draft" writes live immediately;
+snapshots are your undo.
+
+## 6. How the pieces fit
+
+- **✨ comes only from practice.** Submitting pays; the game only spends.
+- **Options are seeded per day** — a student sees the same choices all day, and a new roll
+  tomorrow. Reloading won't reroll.
+- **Days roll at 12AM Pacific** for everyone, or a student can spend ✨ to skip ahead.
+- **Game off** hides ✨ and the Game button but keeps counting quietly, so switching back
+  loses nothing.
+
+## 7. Known limits
+
+- ✨ is awarded by browser code, so a determined student could inflate it. `aplog` is the
+  receipt if you ever want to check. A Cloud Function would close this properly.
+- Published Google Sheets are **public by URL** — don't put anything private in a word source.
+- Many sites (Google search, dictionary.com) refuse to be embedded and show blank in an
+  iframe. Google Docs you own always work.
+- Guest work lives in one browser on one device. Clearing browser data loses it.
+
+## 8. Files
+
+| file | what it is |
 |---|---|
-| index.html | Home / Google sign-in (you can edit its text + background) |
-| dashboard.html | Your dashboard: Approve, Answer, Mark, Worksheets (incl. gold), Gold log, Student boxes, Parent feedback, Profile |
-| editor.html | Build a worksheet (6 question types) |
-| assign.html | Assign worksheets to a student, set their order |
-| answers.html | Review attempts, edit text, comment, mark Good job / Try again |
-| generator.html | Turn student answers into a new multiple-choice worksheet |
-| student.html | What a student sees (also your "view as" and preview) |
-| parent.html | Read-only parent view with child picker |
+| `config.js` | your Firebase keys + role resolver |
+| `shared.js` | helpers: tokens, sheets, seeded rolls, embeds, rich text |
+| `style.css` | all styling |
+| `index.html` | landing / login / guest entry |
+| `student.html` + `student.js` | dashboard, exercises, archives, test |
+| `game.html` + `game.js` | the game |
+| `teacher.html` + `teacher.js` | approve, mark, worksheets, categories, sources, rewards |
+| `wseditor.html` + `wseditor.js` | worksheet editor |
+| `gameeditor.html` + `gameeditor.js` | game editor |
 
-## Question types
-`typed` (text box + B/I/U toolbar) · `mc` (multiple choice) · `blank`
-(fill-in) · `check` (just tick it off) · `draw` (drawing canvas) · `task`
-(nothing to submit). Any question can also carry an **embed** (Google Doc,
-YouTube) shown inline so students never leave the site.
-
-## First run
-1. Sign in with your teacher Google account → dashboard.
-2. Profile tab → set your name, stamps, parent blurb, wordlist reference embeds → Save.
-3. Worksheets → Create → add questions → Save.
-4. Worksheets tab → set gold per worksheet (the gold field on each row).
-5. Student signs in → approve them in Students → Assign (button on the worksheet row).
-6. Use **👁 View as** to see exactly what they see.
-7. Add a parent's email under a student to give read-only access.
+When I hand you updates, the `?v=` number on every script bumps, so browsers fetch the
+new files automatically — nobody needs to clear a cache.

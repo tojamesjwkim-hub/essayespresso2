@@ -1,119 +1,57 @@
-<!DOCTYPE html>
-<html lang="en">
-<head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Sign in</title>
-<link rel="stylesheet" href="style.css?v=3">
-</head>
-<body>
-<div id="runnerTop" class="runner"></div>
-
-<div id="teacherBar" class="viewbar hidden">
-  <span>Signed in as teacher.</span>
-  <span><a href="dashboard.html" style="color:#fff;">Go to dashboard →</a>
-  <button id="editHomeBtn">Edit this page</button></span>
-</div>
-
-<div class="wrap" style="max-width:620px;">
-  <div class="sitehead" style="justify-content:center;margin-top:34px;">
-    <span id="siteIcon" class="siteicon">icon</span>
-    <span id="siteTitle" class="sitetitle">EssayEspresso</span>
+<!DOCTYPE html><html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>EssayEspresso</title>
+<link rel="stylesheet" href="style.css?v=1">
+</head><body>
+<div class="wrap narrow">
+  <div style="display:flex;align-items:center;gap:10px;margin:14px 0 10px;">
+    <span class="siteicon">icon</span><span class="sitetitle" id="siteTitle">EssayEspresso</span>
   </div>
-  <p id="tagline" class="muted" style="text-align:center;">A tutoring worksheet space</p>
-
-  <div class="card" style="text-align:center;margin-top:18px;">
-    <p id="signinPrompt">Sign in with the Google account your tutor approved.</p>
-    <button class="primary big" id="signinBtn">Sign in with Google</button>
-    <div id="err" class="err hidden"></div>
-    <p id="newNote" class="muted" style="margin-top:14px;">New here? Sign in and your tutor will approve you shortly.</p>
-  </div>
-
-  <div id="editPanel" class="card fill hidden">
-    <h2>Edit home page</h2>
-    <p class="muted">Site title</p><input id="fTitle" type="text">
-    <p class="muted">Tagline</p><input id="fTagline" type="text">
-    <p class="muted">Sign-in prompt</p><input id="fPrompt" type="text">
-    <p class="muted">"New here" note</p><input id="fNewNote" type="text">
-    <p class="muted">Runner text (top &amp; bottom)</p><input id="fRunner" type="text">
-    <p class="muted">Site icon image URL</p><input id="fIcon" type="url">
-    <p class="muted">Background — pastel or image URL</p>
-    <div id="swatches" style="margin:4px 0;"></div>
-    <input id="fBg" type="text" placeholder="#c9dcf0 or https://image…">
-    <p class="muted" style="margin-top:8px;">Opacity — <span id="opVal">90</span>% (max 90)</p>
-    <input id="fOpacity" type="range" min="0" max="90" value="90" style="width:100%;">
-    <div style="margin-top:12px;">
-      <button class="primary" id="saveHomeBtn">Save</button>
-      <button id="cancelHomeBtn">Cancel</button>
+  <div id="msg"></div>
+  <div class="card" id="loginCard">
+    <h2>Practise a little, every day.</h2>
+    <p style="margin:8px 0;">A few short exercises. That's the whole idea.</p>
+    <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:12px;">
+      <button class="login" style="font-size:15px;padding:9px 18px;" id="loginBtn">Log in with Google</button>
+      <button class="act" style="font-size:15px;padding:9px 18px;" id="guestBtn">Try it as a guest</button>
     </div>
+    <p class="muted" style="margin-top:10px;">Guest work is saved on this device only.</p>
   </div>
 </div>
-
-<div id="runnerBottom" class="runner" style="margin-top:28px;"></div>
-
-<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
-<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-auth-compat.js"></script>
-<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore-compat.js"></script>
-<script src="config.js?v=3"></script>
-<script src="shared-ui.js?v=3"></script>
+<script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-auth-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-firestore-compat.js"></script>
+<script src="config.js?v=1"></script>
+<script src="shared.js?v=1"></script>
 <script>
-var currentSite = Object.assign({}, SITE_DEFAULTS);
-
-function paintSite(s){
-  renderSiteChrome(s);
-  $("tagline").textContent = s.tagline || SITE_DEFAULTS.tagline;
-  $("signinPrompt").textContent = s.prompt || SITE_DEFAULTS.prompt;
-  $("newNote").textContent = s.newNote || SITE_DEFAULTS.newNote;
-  applyBackground(s.bg, s.opacity);
-}
-
-siteRef.get().then(function(snap){
-  if(snap.exists) currentSite=Object.assign({},SITE_DEFAULTS,snap.data());
-  paintSite(currentSite);
-}).catch(function(){ paintSite(currentSite); });
-
-$("signinBtn").onclick=function(){
-  $("err").classList.add("hidden");
-  loginWithGoogle().catch(function(e){ showErr("Sign-in failed: "+e.message); });
+$("guestBtn").onclick=function(){ LS.set("guest",true); location.href="student.html"; };
+$("loginBtn").onclick=function(){
+  signIn().catch(function(e){ $("msg").appendChild(errBox("Sign-in failed: "+e.message)); });
 };
+siteRef.get().then(function(d){
+  if(d.exists && d.data().title) $("siteTitle").textContent=d.data().title;
+}).catch(function(){});
 
-resolveRole(function(r){
-  if(r.role==="none"){ $("teacherBar").classList.add("hidden"); return; }
-  if(r.role==="teacher"){ $("teacherBar").classList.remove("hidden"); return; }
-  if(r.role==="parent"){ location.href="parent.html"; return; }
-  location.href="student.html";
+auth.onAuthStateChanged(function(u){
+  if(!u) return;
+  resolveRole(u,function(role){
+    if(role==="teacher"){ location.href="teacher.html"; return; }
+    if(role==="student"){ location.href="student.html"; return; }
+    // pending: create a request record then show waiting note
+    studentsCol.doc(u.uid).set({
+      email:u.email, name:u.displayName||u.email, photo:u.photoURL||"",
+      status:"pending", requestedAt:firebase.firestore.FieldValue.serverTimestamp()
+    },{merge:true}).catch(function(){});
+    clear($("loginCard"));
+    var c=$("loginCard");
+    c.appendChild(el("h2",null,"Thanks — you're on the list."));
+    c.appendChild(el("p",null,"Your tutor needs to approve this account. Try again once they have."));
+    var bar=el("div"); bar.style.marginTop="10px";
+    bar.appendChild(mkBtn("Practise as a guest meanwhile","act",function(){
+      LS.set("guest",true); location.href="student.html"; }));
+    bar.appendChild(mkBtn("Log out","out",function(){ signOutNow().then(function(){location.reload();}); }));
+    c.appendChild(bar);
+  });
 });
-
-$("fOpacity") && ($("fOpacity").oninput=function(){ $("opVal").textContent=$("fOpacity").value; });
-
-$("editHomeBtn").onclick=function(){
-  $("fTitle").value=currentSite.title||"";
-  $("fTagline").value=currentSite.tagline||"";
-  $("fPrompt").value=currentSite.prompt||"";
-  $("fNewNote").value=currentSite.newNote||"";
-  $("fRunner").value=currentSite.runner||"";
-  $("fIcon").value=currentSite.icon||"";
-  $("fBg").value=currentSite.bg||"";
-  $("fOpacity").value=currentSite.opacity==null?90:currentSite.opacity;
-  $("opVal").textContent=$("fOpacity").value;
-  renderSwatches("swatches","fBg");
-  $("editPanel").classList.remove("hidden");
-  $("editPanel").scrollIntoView({behavior:"smooth"});
-};
-$("cancelHomeBtn").onclick=function(){ $("editPanel").classList.add("hidden"); };
-$("saveHomeBtn").onclick=function(){
-  var s={
-    title:$("fTitle").value.trim(), tagline:$("fTagline").value.trim(),
-    prompt:$("fPrompt").value.trim(), newNote:$("fNewNote").value.trim(),
-    runner:$("fRunner").value.trim(), icon:$("fIcon").value.trim(),
-    bg:$("fBg").value.trim(), opacity:Number($("fOpacity").value)
-  };
-  siteRef.set(s,{merge:true}).then(function(){
-    currentSite=Object.assign({},SITE_DEFAULTS,s);
-    paintSite(currentSite);
-    $("editPanel").classList.add("hidden");
-  }).catch(handleErr("Save failed"));
-};
 </script>
-</body>
-</html>
+</body></html>

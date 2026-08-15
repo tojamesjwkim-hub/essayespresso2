@@ -1,0 +1,370 @@
+/* ================= worksheet editor ================= */
+var ID=new URLSearchParams(location.search).get("id"), W=null, T={}, msg=null;
+
+auth.onAuthStateChanged(function(u){
+  if(!u || !isTeacherUser(u)){ location.href="index.html"; return; }
+  Promise.all([wsCol.doc(ID).get(), teacherRef.get()]).then(function(r){
+    if(!r[0].exists) throw new Error("worksheet not found");
+    W=Object.assign({id:ID}, r[0].data());
+    T=r[1].exists?r[1].data():{};
+    draw();
+  }).catch(function(e){ $("notice").appendChild(errBox("Could not open: "+e.message)); });
+});
+
+function save(){
+  var patch=JSON.parse(JSON.stringify(W)); delete patch.id;
+  return wsCol.doc(ID).set(patch,{merge:true})
+    .then(function(){ flash(msg,"Saved ✓"); })
+    .catch(function(e){ flash(msg,"Could not save: "+e.message,5000); });
+}
+function tokensAvailable(){
+  var out=[];
+  (W.sources||[]).forEach(function(nm){
+    var s=null; (T.sources||[]).forEach(function(x){ if(x.name===nm) s=x; });
+    if(!s) return;
+    (s.cols||[]).forEach(function(c){ out.push("{"+s.name+"."+c.name+"}"); });
+  });
+  return out;
+}
+
+function draw(){
+  var host=$("host"); clear(host);
+  msg=el("span","muted");
+  var c=el("div","card t"); host.appendChild(c);
+  var head=el("div","cardhead");
+  head.appendChild(el("h2",null,"Editing: "+(W.title||"")));
+  var ctr=el("div","ctrls");
+  ctr.appendChild(mkBtn("👁 Preview as student","edit",function(){ save().then(preview); }));
+  ctr.appendChild(mkBtn("Save","act",save));
+  ctr.appendChild(msg);
+  head.appendChild(ctr); c.appendChild(head);
+
+  /* basics */
+  c.appendChild(el("h3",null,"Basics"));
+  c.appendChild(el("div","lab","Title"));
+  var ti=inp(W.title,"text",function(v){ W.title=v; }); c.appendChild(ti);
+
+  var r1=el("div","fxrow");
+  r1.appendChild(el("span","muted","Tags (space separated)")).style.width="150px";
+  r1.appendChild(inp((W.tags||[]).join(" "),"text",function(v){
+    W.tags=v.split(/\s+/).filter(Boolean); }));
+  r1.appendChild(el("span","muted","✨ per submit"));
+  r1.appendChild(inp(W.ap||0,"number",function(v){ W.ap=Number(v)||0; }));
+  c.appendChild(r1);
+
+  var r2=el("div","fxrow");
+  r2.appendChild(el("span","muted","Category")).style.width="150px";
+  var cat=document.createElement("select"); cat.style.cssText="flex:0 0 180px;";
+  var none=document.createElement("option"); none.value=""; none.textContent="— none —"; cat.appendChild(none);
+  (T.categories||[]).forEach(function(x){ var o=document.createElement("option");
+    o.value=x.name; o.textContent=x.name; cat.appendChild(o); });
+  cat.value=W.category||"";
+  cat.onchange=function(){ W.category=cat.value; };
+  r2.appendChild(cat);
+  var ssl=el("label"); ssl.style.width="auto";
+  var ss=document.createElement("input"); ss.type="checkbox"; ss.checked=!!W.selfServe;
+  ss.onchange=function(){ W.selfServe=ss.checked; };
+  ssl.appendChild(ss); ssl.appendChild(document.createTextNode(" students may self-assign"));
+  r2.appendChild(ssl);
+  c.appendChild(r2);
+
+  var r3=el("div","fxrow");
+  r3.appendChild(el("span","muted","Progress counter")).style.width="150px";
+  var cs=document.createElement("select"); cs.style.cssText="flex:0 0 160px;";
+  [["none","none"],["total","done / total"],["unit","count + unit"]].forEach(function(o){
+    var x=document.createElement("option"); x.value=o[0]; x.textContent=o[1]; cs.appendChild(x); });
+  cs.value=W.counterStyle||"none";
+  r3.appendChild(cs);
+  var cx=el("span"); r3.appendChild(cx);
+  function counterExtra(){
+    clear(cx);
+    if(cs.value==="total"){
+      cx.appendChild(el("span","muted","total "));
+      cx.appendChild(inp(W.counterTotal||0,"number",function(v){ W.counterTotal=Number(v)||0; }));
+    } else if(cs.value==="unit"){
+      cx.appendChild(el("span","muted","unit "));
+      var u=inp(W.counterUnit||"","text",function(v){ W.counterUnit=v; });
+      u.style.cssText="width:130px;"; cx.appendChild(u);
+    }
+  }
+  cs.onchange=function(){ W.counterStyle=cs.value; counterExtra(); };
+  counterExtra();
+  c.appendChild(r3);
+
+  /* archive columns */
+  c.appendChild(el("h3",null,"Archive columns"));
+  W.archiveCols = W.archiveCols||[];
+  var at=el("table"); at.style.maxWidth="520px"; c.appendChild(at);
+  function renderCols(){
+    clear(at);
+    var hr=document.createElement("tr");
+    ["Col","Name",""].forEach(function(h){ hr.appendChild(el("th",null,h)); });
+    at.appendChild(hr);
+    var tr0=document.createElement("tr");
+    tr0.appendChild(el("td",null,"0"));
+    tr0.appendChild(el("td","muted","Timestamp — automatic"));
+    tr0.appendChild(el("td",null,"")); at.appendChild(tr0);
+    W.archiveCols.forEach(function(cn,i){
+      var tr=document.createElement("tr");
+      tr.appendChild(el("td",null,String(i+1)));
+      var td=el("td");
+      td.appendChild(inp(cn,"text",function(v){ W.archiveCols[i]=v; }));
+      tr.appendChild(td);
+      var td2=el("td");
+      td2.appendChild(mkBtn("✕","del",function(){ W.archiveCols.splice(i,1); renderCols(); drawQuestions(); }));
+      tr.appendChild(td2); at.appendChild(tr);
+    });
+  }
+  renderCols();
+  c.appendChild(mkBtn("+ Add column","act",function(){
+    W.archiveCols.push("Column "+(W.archiveCols.length+1)); renderCols(); drawQuestions(); }));
+  c.appendChild(el("p","muted",
+    "Columns whose name matches a source column (e.g. a column called \"words\" with a {src.words} token) "+
+    "fill in automatically."));
+
+  /* panels */
+  ["help","check"].forEach(function(key){
+    W[key]=W[key]||{on:true,text:"",frames:[]};
+    c.appendChild(el("h3",null,'"'+(key==="help"?"Help":"Check")+'" panel'));
+    var l=el("label"); l.style.width="auto";
+    var cb=document.createElement("input"); cb.type="checkbox"; cb.checked=W[key].on!==false;
+    cb.onchange=function(){ W[key].on=cb.checked; };
+    l.appendChild(cb); l.appendChild(document.createTextNode(" Show a "+
+      (key==="help"?"Help":"Check")+" button on this worksheet"));
+    c.appendChild(l);
+    c.appendChild(el("div","lab","Text"));
+    var ta=document.createElement("textarea"); ta.style.minHeight="44px"; ta.value=W[key].text||"";
+    ta.oninput=function(){ W[key].text=ta.value; };
+    c.appendChild(ta);
+    c.appendChild(el("div","lab","Iframes"));
+    var ft=el("table"); c.appendChild(ft);
+    function renderFrames(){
+      clear(ft);
+      var hr=document.createElement("tr");
+      ["#","URL","Label","Mode",""].forEach(function(h){ hr.appendChild(el("th",null,h)); });
+      ft.appendChild(hr);
+      (W[key].frames||[]).forEach(function(f,i){
+        var tr=document.createElement("tr");
+        tr.appendChild(el("td",null,String(i+1)));
+        var t1=el("td"); t1.appendChild(inp(f.url,"url",function(v){ f.url=v; })); tr.appendChild(t1);
+        var t2=el("td"); t2.appendChild(inp(f.label,"text",function(v){ f.label=v; })); tr.appendChild(t2);
+        var t3=el("td");
+        var m=document.createElement("select");
+        [["collapsible","Collapsible"],["open","Always open"]].forEach(function(o){
+          var x=document.createElement("option"); x.value=o[0]; x.textContent=o[1]; m.appendChild(x); });
+        m.value=f.mode||"collapsible"; m.onchange=function(){ f.mode=m.value; };
+        t3.appendChild(m); tr.appendChild(t3);
+        var t4=el("td"); t4.appendChild(mkBtn("✕","del",function(){
+          W[key].frames.splice(i,1); renderFrames(); }));
+        tr.appendChild(t4); ft.appendChild(tr);
+      });
+    }
+    renderFrames();
+    c.appendChild(mkBtn("+ Add iframe","act",function(){
+      W[key].frames=W[key].frames||[];
+      W[key].frames.push({url:"",label:"Reference",mode:"collapsible"}); renderFrames(); }));
+  });
+  c.appendChild(el("p","muted",
+    "Note: many sites (Google search, dictionary.com) block being embedded and will show blank. "+
+    "Google Docs you own always work."));
+
+  /* sources */
+  c.appendChild(el("h3",null,"Word sources for this worksheet"));
+  W.sources=W.sources||[];
+  var sh=el("div"); c.appendChild(sh);
+  function renderSources(){
+    clear(sh);
+    W.sources.forEach(function(nm,i){
+      var r=el("div","fxrow");
+      var s=document.createElement("select"); s.style.cssText="flex:0 0 200px;";
+      (T.sources||[]).forEach(function(x){ var o=document.createElement("option");
+        o.value=x.name; o.textContent=x.name; s.appendChild(o); });
+      s.value=nm; s.onchange=function(){ W.sources[i]=s.value; renderSources(); };
+      r.appendChild(s);
+      r.appendChild(mkBtn("✕","del",function(){ W.sources.splice(i,1); renderSources(); }));
+      sh.appendChild(r);
+    });
+    var tk=el("div"); tk.style.cssText=
+      "border:2px solid #b8860b;background:#fffdf0;padding:9px;margin-top:8px;font-size:13px;";
+    var toks=tokensAvailable();
+    tk.innerHTML = "<strong>Available tokens:</strong> "+
+      (toks.map(function(t){ return "<code>"+esc(t)+"</code>"; }).join(" ")||"none — add a source")+
+      "<br>Two tokens from the <strong>same</strong> source come from the same row (a matched pair). "+
+      "Tokens from <strong>different</strong> sources are picked independently.";
+    sh.appendChild(tk);
+  }
+  renderSources();
+  c.appendChild(mkBtn("+ Add source","act",function(){
+    var first=(T.sources||[])[0]; if(!first){ alert("Add a source on the dashboard first."); return; }
+    W.sources.push(first.name); renderSources(); }));
+
+  /* questions */
+  c.appendChild(el("h3",null,"Questions"));
+  var qh=el("div"); c.appendChild(qh);
+  window.drawQuestions=function(){
+    clear(qh);
+    W.questions=W.questions||[];
+    W.questions.forEach(function(q,i){ qh.appendChild(questionCard(q,i)); });
+  };
+  drawQuestions();
+  c.appendChild(mkBtn("+ Add question","act",function(){
+    W.questions.push({label:"Question "+(W.questions.length+1)+".",type:"typed",text:""});
+    drawQuestions(); }));
+
+  /* test */
+  c.appendChild(el("h3",null,"Test settings"));
+  W.test=W.test||{on:false,count:5,options:3,ap:3,wordings:[]};
+  var tl=el("label"); tl.style.width="auto";
+  var tcb=document.createElement("input"); tcb.type="checkbox"; tcb.checked=!!W.test.on;
+  tcb.onchange=function(){ W.test.on=tcb.checked; };
+  tl.appendChild(tcb); tl.appendChild(document.createTextNode(' Show "Test ✨" on this worksheet\'s archive'));
+  c.appendChild(tl);
+  var tr1=el("div","fxrow");
+  tr1.appendChild(el("span","muted","Questions per round")).style.width="170px";
+  tr1.appendChild(inp(W.test.count||5,"number",function(v){ W.test.count=Number(v)||5; }));
+  c.appendChild(tr1);
+  var tr2=el("div","fxrow");
+  tr2.appendChild(el("span","muted","Answer options each")).style.width="170px";
+  tr2.appendChild(inp(W.test.options||3,"number",function(v){ W.test.options=Number(v)||3; }));
+  c.appendChild(tr2);
+  var tr3=el("div","fxrow");
+  tr3.appendChild(el("span","muted","✨ per perfect round")).style.width="170px";
+  tr3.appendChild(inp(W.test.ap||3,"number",function(v){ W.test.ap=Number(v)||3; }));
+  c.appendChild(tr3);
+  c.appendChild(el("div","lab","Question wording — use {Column Name} tokens"));
+  var wh=el("div"); c.appendChild(wh);
+  function renderWordings(){
+    clear(wh);
+    (W.test.wordings||[]).forEach(function(w,i){
+      var r=el("div","fxrow");
+      r.appendChild(inp(w.text,"text",function(v){ w.text=v; })).style.cssText="flex:2;min-width:200px;";
+      r.appendChild(el("span","muted","answer →"));
+      var s=document.createElement("select"); s.style.cssText="flex:0 0 140px;";
+      (W.archiveCols||[]).forEach(function(cn){ var o=document.createElement("option");
+        o.value=cn; o.textContent=cn; s.appendChild(o); });
+      s.value=w.answerCol||""; s.onchange=function(){ w.answerCol=s.value; };
+      r.appendChild(s);
+      r.appendChild(mkBtn("✕","del",function(){ W.test.wordings.splice(i,1); renderWordings(); }));
+      wh.appendChild(r);
+    });
+  }
+  renderWordings();
+  c.appendChild(mkBtn("+ Add question wording","act",function(){
+    W.test.wordings=W.test.wordings||[];
+    W.test.wordings.push({text:"What does {"+((W.archiveCols||["Word"])[0])+"} mean?",
+      answerCol:(W.archiveCols||[])[1]||""});
+    renderWordings(); }));
+
+  c.appendChild(el("h3",null,"Other"));
+  var pd=el("label"); pd.style.width="auto";
+  var pcb=document.createElement("input"); pcb.type="checkbox"; pcb.checked=!!W.publicDemo;
+  pcb.onchange=function(){ W.publicDemo=pcb.checked; };
+  pd.appendChild(pcb); pd.appendChild(document.createTextNode(" Public demo — visible to guests who aren't logged in"));
+  c.appendChild(pd);
+
+  var sb=el("div"); sb.style.marginTop="14px";
+  sb.appendChild(mkBtn("Save","act",save));
+  sb.appendChild(mkBtn("Back to dashboard","",function(){ save().then(function(){
+    location.href="teacher.html"; }); }));
+  c.appendChild(sb);
+}
+
+function inp(val,type,fn){
+  var i=document.createElement("input"); i.type=type||"text";
+  i.value=(val===undefined||val===null)?"":val;
+  i.oninput=function(){ fn(i.value); };
+  if(type==="number") i.style.width="90px";
+  return i;
+}
+function questionCard(q,i){
+  var box=el("div","card"); box.style.background="#fff";
+  var top=el("div"); top.style.cssText="display:flex;justify-content:space-between;gap:8px;flex-wrap:wrap;";
+  var lab=inp(q.label,"text",function(v){ q.label=v; }); lab.style.cssText="width:170px;font-weight:bold;";
+  top.appendChild(lab);
+  var btns=el("span");
+  btns.appendChild(mkBtn("▲","",function(){ if(i>0){ var x=W.questions[i-1];
+    W.questions[i-1]=W.questions[i]; W.questions[i]=x; drawQuestions(); } }));
+  btns.appendChild(mkBtn("▼","",function(){ if(i<W.questions.length-1){ var x=W.questions[i+1];
+    W.questions[i+1]=W.questions[i]; W.questions[i]=x; drawQuestions(); } }));
+  btns.appendChild(mkBtn("Delete","del",function(){ W.questions.splice(i,1); drawQuestions(); }));
+  top.appendChild(btns); box.appendChild(top);
+
+  var types=[["typed","Typed"],["paired","Paired list"],["mc","MCQ"],["check","Checkbox"]];
+  var tp=el("div"); tp.style.cssText="display:flex;gap:6px;flex-wrap:wrap;margin:8px 0;";
+  types.forEach(function(t){
+    var l=el("label"); l.style.cssText="border:1px solid #000;padding:4px 9px;font-size:13px;width:auto;cursor:pointer;"+
+      (q.type===t[0]?"background:#000;color:#fff;font-weight:bold;":"background:#fff;");
+    var r=document.createElement("input"); r.type="radio"; r.name="qt"+i; r.checked=(q.type===t[0]);
+    r.onchange=function(){ q.type=t[0]; drawQuestions(); };
+    l.appendChild(r); l.appendChild(document.createTextNode(" "+t[1]));
+    tp.appendChild(l);
+  });
+  box.appendChild(tp);
+
+  box.appendChild(el("div","lab","Question text"));
+  box.appendChild(inp(q.text,"text",function(v){ q.text=v; }));
+  var toks=tokensAvailable();
+  if(toks.length) box.appendChild(el("p","muted","Tokens: "+toks.join(" ")));
+
+  if(q.type==="typed"){
+    box.appendChild(el("div","lab","Grey placeholder text"));
+    box.appendChild(inp(q.placeholder,"text",function(v){ q.placeholder=v; }));
+  }
+  if(q.type==="mc"){
+    box.appendChild(el("div","lab","Options (one per line)"));
+    var ta=document.createElement("textarea"); ta.style.minHeight="60px";
+    ta.value=(q.options||[]).join("\n");
+    ta.oninput=function(){ q.options=ta.value.split("\n").filter(Boolean); };
+    box.appendChild(ta);
+  }
+  box.appendChild(el("div","lab","Embed for this question (optional)"));
+  var er=el("div","fxrow");
+  er.appendChild(inp(q.embed,"url",function(v){ q.embed=v; }));
+  var em=document.createElement("select"); em.style.cssText="flex:0 0 130px;";
+  [["open","Always open"],["collapsible","Collapsible"]].forEach(function(o){
+    var x=document.createElement("option"); x.value=o[0]; x.textContent=o[1]; em.appendChild(x); });
+  em.value=q.embedMode||"open"; em.onchange=function(){ q.embedMode=em.value; };
+  er.appendChild(em); box.appendChild(er);
+
+  if(q.type==="paired"){
+    box.appendChild(el("div","lab","Label the two boxes"));
+    var lr=el("div","fxrow");
+    lr.appendChild(inp(q.leftLabel||"Left","text",function(v){ q.leftLabel=v; }));
+    lr.appendChild(inp(q.rightLabel||"Right","text",function(v){ q.rightLabel=v; }));
+    box.appendChild(lr);
+    box.appendChild(el("div","lab","Send to archive columns"));
+    var ar=el("div","fxrow");
+    ar.appendChild(el("span","muted","left →"));
+    ar.appendChild(colSelect(q.leftCol,function(v){ q.leftCol=v; }));
+    ar.appendChild(el("span","muted","right →"));
+    ar.appendChild(colSelect(q.rightCol,function(v){ q.rightCol=v; }));
+    box.appendChild(ar);
+    box.appendChild(el("p","muted","Each line the student adds becomes its own archive row."));
+  } else {
+    box.appendChild(el("div","lab","Send this answer to archive column"));
+    box.appendChild(colSelect(q.archiveCol,function(v){ q.archiveCol=v; }));
+  }
+  return box;
+}
+function colSelect(val,fn){
+  var s=document.createElement("select"); s.style.cssText="flex:0 0 170px;width:auto;";
+  var none=document.createElement("option"); none.value=""; none.textContent="don't archive";
+  s.appendChild(none);
+  (W.archiveCols||[]).forEach(function(cn){ var o=document.createElement("option");
+    o.value=cn; o.textContent=cn; s.appendChild(o); });
+  s.value=val||""; s.onchange=function(){ fn(s.value); };
+  return s;
+}
+
+/* ---------- preview ---------- */
+function preview(){
+  var bar=$("previewBar"); bar.className="ok";
+  clear(bar);
+  bar.appendChild(el("strong",null,"Previewing as a student. "));
+  bar.appendChild(mkBtn('← Back to editing "'+(W.title||"")+'"',"act",function(){
+    location.reload(); }));
+  var f=document.createElement("iframe");
+  f.src="student.html?preview="+ID;
+  f.style.cssText="width:100%;height:640px;border:2px solid #000;margin-top:10px;background:#fff;";
+  clear($("host")); $("host").appendChild(f);
+}

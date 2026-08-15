@@ -1,24 +1,22 @@
 <!DOCTYPE html><html lang="en"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>EssayEspresso</title>
+<title>Worksheet editor</title>
 <link rel="stylesheet" href="style.css?v=1">
-</head><body>
-<div class="wrap narrow" id="wrap">
+</head><body class="teacher">
+<div class="wrap">
+  <div id="previewBar" class="hidden"></div>
   <div id="notice"></div>
   <div style="display:flex;align-items:center;gap:10px;margin:14px 0 10px;">
-    <span class="siteicon">icon</span><span class="sitetitle" id="siteTitle">EssayEspresso</span>
+    <span class="siteicon">icon</span><span class="sitetitle">Worksheet editor</span>
+    <span style="flex:1"></span>
+    <button onclick="location.href='teacher.html'">← Dashboard</button>
   </div>
-  <div id="profileCard"></div>
-  <div id="settingsCard" class="hidden"></div>
-  <div id="practiceCard"></div>
-  <div id="pickerCard" class="hidden"></div>
-  <div id="exerciseCard"></div>
+  <div id="host"></div>
 </div>
-<div class="modal" id="modal"><div class="modalbox" id="modalBody"></div></div>
 <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-auth-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-firestore-compat.js"></script>
 <script src="config.js?v=1"></script>
 <script src="shared.js?v=1"></script>
-<script src="student.js?v=1"></script>
+<script src="wseditor.js?v=1"></script>
 </body></html>
