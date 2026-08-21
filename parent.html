@@ -1,23 +1,20 @@
 <!DOCTYPE html><html lang="en"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Dashboard — EssayEspresso</title>
-<link rel="stylesheet" href="style.css?v=2">
-</head><body class="teacher">
+<title>EssayEspresso — parent view</title>
+<link rel="stylesheet" href="style.css?v=3">
+</head><body>
 <div class="wrap">
-  <div id="notice"></div>
   <div style="display:flex;align-items:center;gap:10px;margin:14px 0 10px;">
     <span class="siteicon">icon</span><span class="sitetitle">EssayEspresso</span>
   </div>
-  <div id="profileCard"></div>
-  <div id="settingsCard" class="hidden"></div>
-  <div class="tabs" id="tabs"></div>
-  <div id="panels"></div>
+  <div id="msg"></div>
+  <div class="card" id="profileCard"></div>
+  <div id="body"></div>
 </div>
-<div class="modal" id="modal"><div class="modalbox" id="modalBody"></div></div>
 <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-auth-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-firestore-compat.js"></script>
-<script src="config.js?v=2"></script>
-<script src="shared.js?v=2"></script>
-<script src="teacher.js?v=2"></script>
+<script src="config.js?v=3"></script>
+<script src="shared.js?v=3"></script>
+<script src="parent.js?v=3"></script>
 </body></html>

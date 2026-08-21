@@ -26,6 +26,23 @@ function tokensAvailable(){
   });
   return out;
 }
+/* Only the columns actually set to show as something visual can fill a media slot. */
+function mediaTokens(){
+  var out=[];
+  (W.sources||[]).forEach(function(nm){
+    var s=null; (T.sources||[]).forEach(function(x){ if(x.name===nm) s=x; });
+    if(!s || s.kind!=="media") return;
+    (s.cols||[]).forEach(function(c){
+      if(c.showAs && c.showAs!=="text") out.push({tok:"{"+s.name+"."+c.name+"}", showAs:c.showAs});
+    });
+  });
+  return out;
+}
+function showAsFor(tok){
+  var f="image";
+  mediaTokens().forEach(function(m){ if(m.tok===tok) f=m.showAs; });
+  return f;
+}
 
 function draw(){
   var host=$("host"); clear(host);
@@ -169,7 +186,7 @@ function draw(){
     "Google Docs you own always work."));
 
   /* sources */
-  c.appendChild(el("h3",null,"Word sources for this worksheet"));
+  c.appendChild(el("h3",null,"Sources for this worksheet"));
   W.sources=W.sources||[];
   var sh=el("div"); c.appendChild(sh);
   function renderSources(){
@@ -178,7 +195,9 @@ function draw(){
       var r=el("div","fxrow");
       var s=document.createElement("select"); s.style.cssText="flex:0 0 200px;";
       (T.sources||[]).forEach(function(x){ var o=document.createElement("option");
-        o.value=x.name; o.textContent=x.name; s.appendChild(o); });
+        o.value=x.name;
+        o.textContent=x.name+(x.kind==="media"?"  (media set)":"");
+        s.appendChild(o); });
       s.value=nm; s.onchange=function(){ W.sources[i]=s.value; renderSources(); };
       r.appendChild(s);
       r.appendChild(mkBtn("✕","del",function(){ W.sources.splice(i,1); renderSources(); }));
@@ -190,7 +209,12 @@ function draw(){
     tk.innerHTML = "<strong>Available tokens:</strong> "+
       (toks.map(function(t){ return "<code>"+esc(t)+"</code>"; }).join(" ")||"none — add a source")+
       "<br>Two tokens from the <strong>same</strong> source come from the same row (a matched pair). "+
-      "Tokens from <strong>different</strong> sources are picked independently.";
+      "Tokens from <strong>different</strong> sources are picked independently."+
+      (mediaTokens().length
+        ? ("<br><strong>Can fill a media slot:</strong> "+
+           mediaTokens().map(function(m){
+             return "<code>"+esc(m.tok)+"</code> ("+m.showAs+")"; }).join(" "))
+        : "");
     sh.appendChild(tk);
   }
   renderSources();
@@ -208,8 +232,13 @@ function draw(){
   };
   drawQuestions();
   c.appendChild(mkBtn("+ Add question","act",function(){
-    W.questions.push({label:"Question "+(W.questions.length+1)+".",type:"typed",text:""});
+    var cols=W.archiveCols||[];
+    W.questions.push({label:"Question "+(W.questions.length+1)+".",type:"typed",text:"",
+      archiveCol: cols[Math.min(W.questions.length, cols.length-1)] || ""});
     drawQuestions(); }));
+  c.appendChild(el("p","muted",
+    "Each question needs its own archive column, or its answer won't be saved. "+
+    "Two questions pointing at the same column get joined with \" | \"."));
 
   /* test */
   c.appendChild(el("h3",null,"Test settings"));
@@ -231,7 +260,15 @@ function draw(){
   tr3.appendChild(el("span","muted","✨ per perfect round")).style.width="170px";
   tr3.appendChild(inp(W.test.ap||3,"number",function(v){ W.test.ap=Number(v)||3; }));
   c.appendChild(tr3);
-  c.appendChild(el("div","lab","Question wording — use {Column Name} tokens"));
+  var tokBox=el("div");
+  tokBox.style.cssText="border:2px solid #b8860b;background:#fffdf0;padding:9px;margin-top:8px;font-size:13px;";
+  tokBox.innerHTML="<strong>Test tokens are your ARCHIVE COLUMNS</strong> — including whatever the student "+
+    "wrote. One row is picked, so every token in a wording comes from that same entry.<br>Available: "+
+    ((W.archiveCols||[]).map(function(cn){ return "<code>{"+esc(cn)+"}</code>"; }).join(" ")||"add a column first")+
+    "<br>e.g. <code>What does the keyword in \"{What you wrote}\" mean?</code> with the answer column set to "+
+    "<code>Meaning</code>.";
+  c.appendChild(tokBox);
+  c.appendChild(el("div","lab","Question wording"));
   var wh=el("div"); c.appendChild(wh);
   function renderWordings(){
     clear(wh);
@@ -309,6 +346,24 @@ function questionCard(q,i){
   if(q.type==="typed"){
     box.appendChild(el("div","lab","Grey placeholder text"));
     box.appendChild(inp(q.placeholder,"text",function(v){ q.placeholder=v; }));
+    var al=el("label"); al.style.cssText="width:auto;display:block;margin-top:6px;";
+    var acb=document.createElement("input"); acb.type="checkbox"; acb.checked=!!q.accumulate;
+    acb.onchange=function(){ q.accumulate=acb.checked; drawQuestions(); };
+    al.appendChild(acb);
+    al.appendChild(document.createTextNode(" Carry work forward — this box opens pre-filled with everything submitted before"));
+    box.appendChild(al);
+    if(q.accumulate){
+      var ar=el("div","fxrow");
+      ar.appendChild(el("span","muted","Pull from")).style.width="90px";
+      ar.appendChild(colSelect(q.accumulateFrom,function(v){ q.accumulateFrom=v; }));
+      ar.appendChild(el("span","muted","joined by"));
+      ar.appendChild(inp(q.accumulateJoin===undefined?" ":q.accumulateJoin,"text",
+        function(v){ q.accumulateJoin=v; }));
+      box.appendChild(ar);
+      box.appendChild(el("p","muted",
+        "Each submission appends to what's already there — so \"I like dogs.\" becomes "+
+        "\"I like dogs. I like cats.\" the next day. Editable every time."));
+    }
   }
   if(q.type==="mc"){
     box.appendChild(el("div","lab","Options (one per line)"));
@@ -317,14 +372,58 @@ function questionCard(q,i){
     ta.oninput=function(){ q.options=ta.value.split("\n").filter(Boolean); };
     box.appendChild(ta);
   }
+  /* ---- media slot ---- */
+  var mts = mediaTokens();
+  box.appendChild(el("div","lab","Show a media slot under the question"));
+  if(!mts.length){
+    box.appendChild(el("p","muted",
+      "No media set is attached to this worksheet yet. Add one under Sources on your dashboard, "+
+      "set a column to show as an image, PDF or web page, then add it to this worksheet above."));
+  } else {
+    var mr=el("div","fxrow");
+    var msel=document.createElement("select"); msel.style.cssText="flex:0 0 210px;width:auto;";
+    var mnone=document.createElement("option"); mnone.value=""; mnone.textContent="— none —";
+    msel.appendChild(mnone);
+    mts.forEach(function(m){
+      var o=document.createElement("option");
+      o.value=m.tok; o.textContent=m.tok+"  ("+m.showAs+")";
+      msel.appendChild(o);
+    });
+    msel.value=q.media||"";
+    msel.onchange=function(){ q.media=msel.value; drawQuestions(); };
+    mr.appendChild(msel);
+    if(q.media){
+      mr.appendChild(el("span","muted","caption"));
+      mr.appendChild(inp(q.mediaCaption,"text",function(v){ q.mediaCaption=v; }));
+    }
+    box.appendChild(mr);
+    if(q.media){
+      box.appendChild(el("p","muted",
+        "Any other token from the same source comes from the same row, so the caption always "+
+        "matches what's shown. A caption can be a token too, e.g. {paintings.title}."));
+      box.appendChild(el("div","lab","Also save the media link to"));
+      var mc=colSelect(q.mediaCol,function(v){ q.mediaCol=v; });
+      mc.style.borderWidth="2px"; mc.style.borderColor="#0a7d1b";
+      box.appendChild(mc);
+      box.appendChild(el("p","muted",
+        "This is the part that makes it worth something later — the archive keeps which picture "+
+        "they were looking at, so the row still means something a month on, and the test can "+
+        "show it back to them."));
+    }
+  }
+
   box.appendChild(el("div","lab","Embed for this question (optional)"));
   var er=el("div","fxrow");
+  er.appendChild(inp(q.embedLabel,"text",function(v){ q.embedLabel=v; },"140px"));
   er.appendChild(inp(q.embed,"url",function(v){ q.embed=v; }));
   var em=document.createElement("select"); em.style.cssText="flex:0 0 130px;";
   [["open","Always open"],["collapsible","Collapsible"]].forEach(function(o){
     var x=document.createElement("option"); x.value=o[0]; x.textContent=o[1]; em.appendChild(x); });
   em.value=q.embedMode||"open"; em.onchange=function(){ q.embedMode=em.value; };
   er.appendChild(em); box.appendChild(er);
+  box.appendChild(el("p","muted",
+    "Label · URL · mode. Google Docs/Sheets/Slides need to be shared (Anyone with the link) or "+
+    "published to the web — otherwise the box renders blank. YouTube links convert automatically."));
 
   if(q.type==="paired"){
     box.appendChild(el("div","lab","Label the two boxes"));
@@ -352,7 +451,7 @@ function colSelect(val,fn){
   s.appendChild(none);
   (W.archiveCols||[]).forEach(function(cn){ var o=document.createElement("option");
     o.value=cn; o.textContent=cn; s.appendChild(o); });
-  s.value=val||""; s.onchange=function(){ fn(s.value); };
+  s.value=val||""; s.onchange=function(){ fn(s.value); if(window.checkCols) checkCols(); };
   return s;
 }
 

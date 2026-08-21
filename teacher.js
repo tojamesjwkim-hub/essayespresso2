@@ -1,5 +1,5 @@
 /* ================= EssayEspresso — teacher ================= */
-var T={}, STUDENTS=[], WS={}, TAB="approve";
+var T={}, STUDENTS=[], WS={}, PARENTS=[], TAB="approve";
 
 auth.onAuthStateChanged(function(u){
   if(!u){ location.href="index.html"; return; }
@@ -18,10 +18,12 @@ function boot(){
 }
 function loadAll(){
   return Promise.all([
-    studentsCol.get(), wsCol.get()
+    studentsCol.get(), wsCol.get(),
+    parentsCol.get().catch(function(){ return {forEach:function(){}}; })
   ]).then(function(r){
     STUDENTS=[]; r[0].forEach(function(d){ STUDENTS.push(Object.assign({uid:d.id},d.data())); });
     WS={}; r[1].forEach(function(d){ WS[d.id]=Object.assign({id:d.id},d.data()); });
+    PARENTS=[]; r[2].forEach(function(d){ PARENTS.push(Object.assign({uid:d.id},d.data())); });
   });
 }
 function saveTeacher(patch,msg){
@@ -47,13 +49,15 @@ function drawProfile(){
   var ctr=el("div","ctrls");
   ctr.appendChild(mkBtn("Game","fun",function(){ location.href="game.html"; }));
   ctr.appendChild(mkBtn("⚙ Settings","",function(){
-    var s=$("settingsCard"); if(s.classList.contains("hidden")) drawSettings();
-    s.classList.toggle("hidden"); }));
+    var sc=$("settingsCard");
+    if(sc.classList.contains("hidden")){ drawSettings(); sc.classList.remove("hidden"); }
+    else sc.classList.add("hidden");
+  }));
   ctr.appendChild(mkBtn("Log out","out",function(){ signOutNow().then(function(){ location.href="index.html"; }); }));
   head.appendChild(ctr); c.appendChild(head);
 }
 function drawSettings(){
-  var c=$("settingsCard"); clear(c); c.className="card t";
+  var c=$("settingsCard"); clear(c); c.classList.add("card","t");
   var head=el("div","cardhead"); head.appendChild(el("h2",null,"⚙ My settings"));
   var ctr=el("div","ctrls");
   ctr.appendChild(mkBtn("Close ▴","close",function(){ c.classList.add("hidden"); }));
@@ -125,7 +129,8 @@ function exportStudent(uid){
 
 /* ---------- tabs ---------- */
 var TABS=[["approve","Approve"],["mark","Mark"],["worksheets","Worksheets"],
-  ["cats","Categories & sources"],["rewards","Practice rewards"],["studentgame","Student game"]];
+  ["cats","Categories & sources"],["rewards","Practice rewards"],["parents","Parents"],
+  ["studentgame","Student game"]];
 function drawTabs(){
   var t=$("tabs"); clear(t);
   TABS.forEach(function(p){
@@ -137,6 +142,7 @@ function drawTabs(){
 function drawPanel(){
   var p=$("panels"); clear(p);
   if(TAB==="approve") return panApprove(p);
+  if(TAB==="parents") return panParents(p);
   if(TAB==="mark") return panMark(p);
   if(TAB==="worksheets") return panWorksheets(p);
   if(TAB==="cats") return panCats(p);
@@ -145,6 +151,224 @@ function drawPanel(){
 }
 
 /* ---------- Approve ---------- */
+
+/* ---------- removing a student: revoke, or really delete ---------- */
+function askRemove(s){
+  var who = esc(s.name || s.email || "this student");
+  countWork(s.uid).then(function(n){
+    var rows = n===null ? "their work" : (n + " archive entr" + (n===1?"y":"ies"));
+    showModal(
+      "<p style='font-weight:bold;font-size:15px;margin:0 0 10px;'>Remove " + who + "?</p>" +
+      "<label style='display:block;margin-bottom:7px;width:auto;'>" +
+        "<input type='radio' name='rm' value='revoke' checked> <strong>Revoke access, keep the work.</strong><br>" +
+        "<span class='muted' style='margin-left:20px;'>They can't sign in. You keep " + rows +
+        ". Reversible — approve them again any time.</span></label>" +
+      "<label style='display:block;margin-bottom:4px;width:auto;'>" +
+        "<input type='radio' name='rm' value='delete'> <strong>Delete everything.</strong><br>" +
+        "<span class='muted' style='margin-left:20px;'>Archives, drafts and game state. This cannot be undone.</span></label>",
+      [ {label:"Remove", cls:"del", fn:function(){
+          var pick=document.querySelector("input[name=rm]:checked");
+          var mode = pick ? pick.value : "revoke";
+          if(mode==="delete" &&
+             !confirm("Delete everything for "+(s.name||s.email)+"? This cannot be undone.")) return;
+          hideModal();
+          doRemove(s, mode);
+        }},
+        {label:"Cancel", fn:hideModal} ]);
+  });
+}
+function countWork(uid){
+  return studentsCol.doc(uid).collection("archive").get().then(function(sn){
+    if(sn.empty) return 0;
+    var jobs=[];
+    sn.forEach(function(d){
+      jobs.push(studentsCol.doc(uid).collection("archive").doc(d.id)
+        .collection("rows").get().then(function(r){ return r.size; }));
+    });
+    return Promise.all(jobs).then(function(ns){
+      return ns.reduce(function(a,b){ return a+b; }, 0);
+    });
+  }).catch(function(){ return null; });
+}
+function doRemove(s, mode){
+  if(mode!=="delete"){
+    studentsCol.doc(s.uid).set({status:"removed"},{merge:true})
+      .then(function(){ loadAll().then(drawPanel); });
+    return;
+  }
+  wipeStudent(s.uid).then(function(){
+    return studentsCol.doc(s.uid).delete();
+  }).then(function(){ loadAll().then(drawPanel); })
+    .catch(function(e){ alert("Could not finish deleting: "+e.message); });
+}
+function wipeStudent(uid){
+  var root=studentsCol.doc(uid);
+  function killAll(colRef){
+    return colRef.get().then(function(sn){
+      var jobs=[];
+      sn.forEach(function(d){ jobs.push(colRef.doc(d.id).delete()); });
+      return Promise.all(jobs);
+    }).catch(function(){});
+  }
+  return root.collection("archive").get().then(function(sn){
+    var jobs=[];
+    sn.forEach(function(d){ jobs.push(killAll(root.collection("archive").doc(d.id).collection("rows"))); });
+    return Promise.all(jobs);
+  }).catch(function(){}).then(function(){
+    return Promise.all([ killAll(root.collection("archive")),
+                         killAll(root.collection("drafts")),
+                         killAll(root.collection("assignments")),
+                         killAll(root.collection("game")) ]);
+  });
+}
+
+/* ---------- Parents: read-only observers linked to one or more students ---------- */
+function studentName(uid){
+  var f=null; STUDENTS.forEach(function(s){ if(s.uid===uid) f=s; });
+  return f ? (f.name || f.email || uid) : uid;
+}
+function approvedStudents(){
+  return STUDENTS.filter(function(s){ return s.status==="approved"; });
+}
+function panParents(p){
+  var c=el("div","card t"); p.appendChild(c);
+  var head=el("div","cardhead");
+  head.appendChild(el("h2",null,"Parents"));
+  var ctr=el("div","ctrls");
+  var mail=document.createElement("input");
+  mail.type="email"; mail.placeholder="parent@email.com";
+  mail.style.cssText="flex:1;min-width:190px;";
+  ctr.appendChild(mail);
+  ctr.appendChild(mkBtn("+ Invite","act",function(){
+    var e=(mail.value||"").trim().toLowerCase();
+    if(!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(e)){ alert("That doesn't look like an email address."); return; }
+    if(PARENTS.some(function(x){ return (x.email||"").toLowerCase()===e; })){
+      alert("That address is already invited."); return; }
+    parentsCol.doc("invite_"+e.replace(/[^a-z0-9]/g,"_")).set({
+      email:e, students:[], scope:"activity", invited:true,
+      createdAt: firebase.firestore.FieldValue.serverTimestamp()
+    }).then(function(){ mail.value=""; loadAll().then(drawPanel); })
+      .catch(function(err){ alert("Could not invite: "+err.message); });
+  }));
+  head.appendChild(ctr); c.appendChild(head);
+
+  c.appendChild(el("p","muted","Invite by email. When that address signs in with Google it becomes a "+
+    "read-only parent account. One parent can watch several children, and one child can have two parents. "+
+    "Parents never see the game or ✨ balances, and can't change anything."));
+
+  var t=el("table"); t.style.marginTop="10px"; c.appendChild(t);
+  function render(){
+    clear(t);
+    var hr=document.createElement("tr");
+    ["Parent","Watching","They may see","Last seen",""].forEach(function(h){
+      hr.appendChild(el("th",null,h)); });
+    t.appendChild(hr);
+    if(!PARENTS.length){
+      var e0=document.createElement("tr");
+      var td0=el("td","muted","Nobody yet.");
+      td0.colSpan=5; e0.appendChild(td0); t.appendChild(e0);
+      return;
+    }
+    PARENTS.forEach(function(pa){
+      var tr=document.createElement("tr");
+      var a=el("td");
+      a.appendChild(el("strong",null, pa.name || (pa.email||"").split("@")[0] || "Parent"));
+      a.appendChild(document.createElement("br"));
+      a.appendChild(el("span","muted", pa.email||""));
+      if(pa.invited && !pa.uidLinked){
+        a.appendChild(document.createTextNode(" "));
+        var tg=el("span","tag","invited"); tg.style.cursor="default";
+        a.appendChild(tg);
+      }
+      tr.appendChild(a);
+
+      var b=el("td");
+      (pa.students||[]).forEach(function(uid){
+        var line=el("div"); line.style.marginBottom="2px";
+        line.appendChild(document.createTextNode(studentName(uid)+" "));
+        var x=mkBtn("✕","del",function(){
+          var next=(pa.students||[]).filter(function(u){ return u!==uid; });
+          parentsCol.doc(pa.uid).set({students:next},{merge:true})
+            .then(function(){ loadAll().then(drawPanel); });
+        });
+        x.style.cssText="font-size:11px;padding:0 5px;";
+        line.appendChild(x);
+        b.appendChild(line);
+      });
+      var free=approvedStudents().filter(function(s){
+        return (pa.students||[]).indexOf(s.uid)<0; });
+      if(free.length){
+        var add=el("select"); add.style.cssText="width:auto;margin-top:3px;";
+        var o0=document.createElement("option"); o0.value=""; o0.textContent="+ add a student";
+        add.appendChild(o0);
+        free.forEach(function(s){
+          var o=document.createElement("option");
+          o.value=s.uid; o.textContent=s.name||s.email; add.appendChild(o);
+        });
+        add.onchange=function(){
+          if(!add.value) return;
+          var next=(pa.students||[]).concat([add.value]);
+          parentsCol.doc(pa.uid).set({students:next},{merge:true})
+            .then(function(){ loadAll().then(drawPanel); });
+        };
+        b.appendChild(add);
+      }
+      tr.appendChild(b);
+
+      var cc=el("td");
+      cc.appendChild(selectFromT(["full","activity"], pa.scope||"activity", function(v){
+        parentsCol.doc(pa.uid).set({scope:v},{merge:true})
+          .then(function(){ loadAll().then(drawPanel); });
+      }, function(v){ return v==="full" ? "Everything" : "Activity only"; }));
+      tr.appendChild(cc);
+
+      tr.appendChild(el("td","muted", pa.lastSeen ? ptStamp(pa.lastSeen) : "—"));
+
+      var e2=el("td");
+      if((pa.students||[]).length){
+        e2.appendChild(mkBtn("👁 View as","edit",function(){
+          location.href="parent.html?as="+pa.uid; }));
+      }
+      e2.appendChild(mkBtn("Remove","del",function(){
+        if(!confirm("Remove "+(pa.email||"this parent")+"? They lose access straight away.")) return;
+        parentsCol.doc(pa.uid).delete().then(function(){ loadAll().then(drawPanel); });
+      }));
+      tr.appendChild(e2);
+      t.appendChild(tr);
+    });
+  }
+  render();
+
+  var note=el("div","card t"); p.appendChild(note);
+  note.appendChild(el("h2",null,"What each setting shows"));
+  var nt=el("table"); nt.style.cssText="margin-top:8px;max-width:640px;";
+  var nh=document.createElement("tr");
+  ["Setting","They see","They don't see"].forEach(function(h){ nh.appendChild(el("th",null,h)); });
+  nt.appendChild(nh);
+  [["Activity only","Streak, how many entries, which worksheets, when",
+    "The answers themselves, or your comments"],
+   ["Everything","All of the above, plus every answer and every comment you've written",
+    "The game, ✨ balances, and anything they could change"]].forEach(function(r){
+    var tr=document.createElement("tr");
+    tr.appendChild(el("td")).innerHTML="<strong>"+r[0]+"</strong>";
+    tr.appendChild(el("td",null,r[1]));
+    tr.appendChild(el("td","muted",r[2]));
+    nt.appendChild(tr);
+  });
+  note.appendChild(nt);
+}
+function selectFromT(list, val, fn, labelFn){
+  var sel=el("select"); sel.style.width="auto";
+  list.forEach(function(v){
+    var o=document.createElement("option");
+    o.value=v; o.textContent=labelFn?labelFn(v):v;
+    if(v===val) o.selected=true;
+    sel.appendChild(o);
+  });
+  sel.onchange=function(){ fn(sel.value); };
+  return sel;
+}
+
 function panApprove(p){
   var c=el("div","card t"); p.appendChild(c);
   var msg=el("span","muted");
@@ -231,10 +455,7 @@ function panApprove(p){
       } else {
         td6.appendChild(mkBtn("👁 View as","edit",function(){ location.href="student.html?as="+s.uid; }));
       }
-      td6.appendChild(mkBtn("Remove","del",function(){
-        if(confirm("Remove access for "+(s.name||s.email)+"?"))
-          studentsCol.doc(s.uid).set({status:"removed"},{merge:true}).then(function(){ loadAll().then(drawPanel); });
-      }));
+      td6.appendChild(mkBtn("Remove","del",function(){ askRemove(s); }));
       tr.appendChild(td6);
       t.appendChild(tr);
     });
@@ -395,7 +616,7 @@ function panWorksheets(p){
       archiveCols:["Word","Meaning","What you wrote"],
       questions:[{label:"Question 1.",type:"typed",text:"",archiveCol:"What you wrote"}],
       help:{on:true,text:"",frames:[]}, check:{on:true,text:"",frames:[]},
-      sources:[], test:{on:false,count:5,options:3,ap:3,wordings:[]},
+      sources:[], test:{on:true,count:5,options:3,ap:3,wordings:[]},
       counterStyle:"unit", counterUnit:"times"
     }).then(function(ref){ location.href="wseditor.html?id="+ref.id; })
       .catch(function(e){ flash(msg,"Failed: "+e.message,4000); });
@@ -446,6 +667,13 @@ function panWorksheets(p){
       r.appendChild(mkBtn("▲","",function(){ reorder(list,i,-1); }));
       r.appendChild(mkBtn("▼","",function(){ reorder(list,i,1); }));
       r.appendChild(mkBtn("Edit","edit",function(){ location.href="wseditor.html?id="+w.id; }));
+      r.appendChild(mkBtn("⧉ Duplicate","",function(){
+        var copy=JSON.parse(JSON.stringify(w)); delete copy.id;
+        copy.title=(w.title||"Worksheet")+" (copy)";
+        copy.order=(w.order||0)+1;
+        wsCol.add(copy).then(function(ref){ location.href="wseditor.html?id="+ref.id; })
+          .catch(function(e){ flash(msg,"Could not duplicate: "+e.message,4000); });
+      }));
       r.appendChild(mkBtn("Delete","del",function(){
         if(confirm('Delete "'+w.title+'"? This cannot be undone.'))
           wsCol.doc(w.id).delete().then(function(){ loadAll().then(drawPanel); });
@@ -459,6 +687,78 @@ function panWorksheets(p){
     b.set(wsCol.doc(list[i].id),{order:(j+1)*10},{merge:true});
     b.set(wsCol.doc(list[j].id),{order:(i+1)*10},{merge:true});
     b.commit().then(function(){ loadAll().then(drawPanel); });
+  }
+}
+
+/* ---------- checking a media set ----------
+   Reports how many rows, how many are Drive links that need rewriting, and
+   which ones don't load. Images we can genuinely test; frames we can't, so
+   we say so rather than pretending.                                        */
+function checkMediaSet(src, body, statusNode){
+  var mediaCols=(src.cols||[]).filter(function(c){
+    return c.showAs && c.showAs!=="text";
+  });
+  if(!mediaCols.length){
+    statusNode.textContent="✓ "+body.length+" rows — but no column is set to show as an image, "+
+      "PDF or web page yet.";
+    return;
+  }
+  var col = mediaCols[0];
+  var idx = colIndex(col.letter);
+  var urls = body.map(function(r){ return (r[idx]||"").trim(); }).filter(Boolean);
+  var drive = urls.filter(looksLikeDrive).length;
+
+  clear(statusNode);
+  statusNode.appendChild(el("div",null,"✓ "+body.length+" rows · "+urls.length+
+    " link"+(urls.length===1?"":"s")+" in column "+col.letter));
+
+  if(drive){
+    var d=el("div"); d.style.cssText="margin-top:5px;";
+    d.appendChild(el("span",null, drive+" Drive link"+(drive===1?" is":"s are")+
+      " in the share format, which shows Drive's viewer instead of the file. "));
+    d.appendChild(mkBtn("Rewrite them","act",function(){
+      statusNode.appendChild(el("div","ok",
+        "They're rewritten automatically when a student sees them — nothing to change in your sheet."));
+    }));
+    statusNode.appendChild(d);
+  }
+
+  if(col.showAs==="image"){
+    var sample = urls.slice(0,12);
+    var done=0, bad=[];
+    var line=el("div"); line.style.marginTop="5px";
+    line.textContent="Checking "+sample.length+" image"+(sample.length===1?"":"s")+"…";
+    statusNode.appendChild(line);
+    if(!sample.length){ line.textContent="No links to check."; return; }
+    sample.forEach(function(u){
+      var im=new Image();
+      var settled=false;
+      function finish(ok){
+        if(settled) return; settled=true;
+        done++; if(!ok) bad.push(u);
+        if(done===sample.length){
+          if(!bad.length) line.textContent="✓ all "+sample.length+" checked images load.";
+          else {
+            clear(line);
+            line.className="err";
+            line.appendChild(el("div",null, bad.length+" of "+sample.length+
+              " didn't load. Usually that means the file isn't shared with "+
+              "anyone with the link."));
+            bad.slice(0,4).forEach(function(b){
+              line.appendChild(el("div","muted", b.slice(0,90)));
+            });
+          }
+        }
+      }
+      im.onload=function(){ finish(true); };
+      im.onerror=function(){ finish(false); };
+      setTimeout(function(){ finish(false); }, 8000);
+      im.src=mediaUrl(u,"image");
+    });
+  } else {
+    statusNode.appendChild(el("div","muted",
+      "PDFs and web pages can't be checked from here — some sites refuse to load inside a frame. "+
+      "Open the worksheet preview to see which ones come up blank."));
   }
 }
 
@@ -507,10 +807,14 @@ function panCats(p){
 
   /* sources */
   var c2=el("div","card t"); p.appendChild(c2);
-  c2.appendChild(el("h2",null,"Word sources"));
+  c2.appendChild(el("h2",null,"Sources"));
   c2.appendChild(el("p","muted",
     "In Google Sheets: File → Share → Publish to web → choose the tab → CSV. Paste that link here. "+
     "It updates automatically when you edit the sheet (a few minutes' cache delay)."));
+  c2.appendChild(el("p","muted",
+    "A word list is a sheet of words. A media set is a sheet of links — one image, PDF or web page "+
+    "per row — and works exactly the same way, including no repeats until the list runs out. "+
+    "Drive folders can't be read directly, so a media set needs a sheet with one link per row."));
   var srcs=(T.sources||[]).slice();
   var host=el("div"); c2.appendChild(host);
   function renderSrcs(){
@@ -522,6 +826,13 @@ function panCats(p){
       var nm=document.createElement("input"); nm.type="text"; nm.value=s.name||"";
       nm.style.cssText="flex:1;min-width:110px;"; nm.oninput=function(){ s.name=nm.value; renderTokens(); };
       r.appendChild(nm);
+      var kind=el("select"); kind.style.cssText="flex:0 0 130px;width:auto;";
+      [["words","Word list"],["media","Media set"]].forEach(function(k){
+        var o=document.createElement("option"); o.value=k[0]; o.textContent=k[1];
+        if((s.kind||"words")===k[0]) o.selected=true; kind.appendChild(o);
+      });
+      kind.onchange=function(){ s.kind=kind.value; renderSrcs(); };
+      r.appendChild(kind);
       var url=document.createElement("input"); url.type="url"; url.value=s.url||"";
       url.placeholder="https://docs.google.com/…/pub?output=csv";
       url.style.cssText="flex:2;min-width:190px;"; url.oninput=function(){ s.url=url.value; };
@@ -532,7 +843,11 @@ function panCats(p){
         SHEET_CACHE[s.url]=null;
         loadSheet(s.url).then(function(rows){
           var body=rows.length>1?rows.slice(1):rows;
-          st.textContent="✓ "+body.length+" rows · e.g. "+(body[0]||[]).slice(0,3).join(", ");
+          if((s.kind||"words")!=="media"){
+            st.textContent="✓ "+body.length+" rows · e.g. "+(body[0]||[]).slice(0,3).join(", ");
+            return;
+          }
+          checkMediaSet(s, body, st);
         }).catch(function(e){ st.textContent="✗ "+e.message+" — is it published to the web as CSV?"; });
       }));
       r.appendChild(mkBtn("✕ Delete","del",function(){ srcs.splice(i,1); renderSrcs(); }));
@@ -547,7 +862,10 @@ function panCats(p){
       function renderCols(){
         clear(ct);
         var hr=document.createElement("tr");
-        ["Column","Call it…","Token",""].forEach(function(h){ hr.appendChild(el("th",null,h)); });
+        var heads = (s.kind==="media")
+          ? ["Column","Call it…","Show it as","Token",""]
+          : ["Column","Call it…","Token",""];
+        heads.forEach(function(h){ hr.appendChild(el("th",null,h)); });
         ct.appendChild(hr);
         (s.cols||[]).forEach(function(col,ci){
           var tr=document.createElement("tr");
@@ -556,6 +874,17 @@ function panCats(p){
           t1.appendChild(li); tr.appendChild(t1);
           var t2=el("td"); var ni=document.createElement("input"); ni.type="text"; ni.value=col.name||"";
           ni.oninput=function(){ col.name=ni.value; renderTokens(); renderCols(); }; t2.appendChild(ni); tr.appendChild(t2);
+          if(s.kind==="media"){
+            var ts=el("td");
+            var sh=el("select"); sh.style.width="auto";
+            [["text","Plain text"],["image","Image"],["pdf","PDF"],
+             ["web","Web page"],["link","A link to click"]].forEach(function(o){
+              var op=document.createElement("option"); op.value=o[0]; op.textContent=o[1];
+              if((col.showAs||"text")===o[0]) op.selected=true; sh.appendChild(op);
+            });
+            sh.onchange=function(){ col.showAs=sh.value; };
+            ts.appendChild(sh); tr.appendChild(ts);
+          }
           var t3=el("td"); t3.innerHTML="<code>{"+esc(s.name||"src")+"."+esc(col.name||"col")+"}</code>";
           tr.appendChild(t3);
           var t4=el("td"); t4.appendChild(mkBtn("✕","del",function(){ s.cols.splice(ci,1); renderCols(); renderTokens(); }));
@@ -567,7 +896,23 @@ function panCats(p){
       renderCols(); renderTokens();
       box.appendChild(ct);
       box.appendChild(mkBtn("+ Add column","act",function(){
-        s.cols.push({letter:"A",name:"col"+(s.cols.length+1)}); renderCols(); renderTokens(); }));
+        s.cols.push({letter:"A",name:"col"+(s.cols.length+1),showAs:"text"});
+        renderCols(); renderTokens(); }));
+      if(s.kind==="media"){
+        var dr=el("div","fxrow"); dr.style.marginTop="8px";
+        dr.appendChild(el("span","muted","Display height")).style.width="110px";
+        var hi=document.createElement("input"); hi.type="number";
+        hi.value=s.height||240; hi.style.cssText="width:80px;flex:none;";
+        hi.oninput=function(){ s.height=Number(hi.value)||240; };
+        dr.appendChild(hi); dr.appendChild(el("span","muted","px"));
+        var cl=el("label"); cl.style.cssText="width:auto;margin-left:12px;";
+        var cc2=document.createElement("input"); cc2.type="checkbox";
+        cc2.checked = s.clickable!==false;
+        cc2.onchange=function(){ s.clickable=cc2.checked; };
+        cl.appendChild(cc2); cl.appendChild(document.createTextNode(" let them click to open full size"));
+        dr.appendChild(cl);
+        box.appendChild(dr);
+      }
       box.appendChild(tokLine);
       host.appendChild(box);
     });
@@ -575,7 +920,12 @@ function panCats(p){
   renderSrcs();
   var sbar=el("div");
   sbar.appendChild(mkBtn("+ Add source","act",function(){
-    srcs.push({name:"source"+(srcs.length+1),url:"",cols:[{letter:"A",name:"words"},{letter:"B",name:"meaning"}]});
+    srcs.push({name:"source"+(srcs.length+1),kind:"words",url:"",
+      cols:[{letter:"A",name:"words",showAs:"text"},{letter:"B",name:"meaning",showAs:"text"}]});
+    renderSrcs(); }));
+  sbar.appendChild(mkBtn("+ Add media set","act",function(){
+    srcs.push({name:"media"+(srcs.length+1),kind:"media",url:"",height:240,clickable:true,
+      cols:[{letter:"A",name:"pic",showAs:"image"},{letter:"B",name:"title",showAs:"text"}]});
     renderSrcs(); }));
   var msg2=el("span","muted");
   sbar.appendChild(mkBtn("Save sources","act",function(){ saveTeacher({sources:srcs},msg2); }));

@@ -1,56 +1,32 @@
 <!DOCTYPE html><html lang="en"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>EssayEspresso</title>
-<link rel="stylesheet" href="style.css?v=1">
+<link rel="stylesheet" href="style.css?v=3">
 </head><body>
 <div class="wrap narrow">
-  <div style="display:flex;align-items:center;gap:10px;margin:14px 0 10px;">
-    <span class="siteicon">icon</span><span class="sitetitle" id="siteTitle">EssayEspresso</span>
-  </div>
+  <p class="muted" id="goingIn" style="margin-top:20px;">One moment…</p>
   <div id="msg"></div>
-  <div class="card" id="loginCard">
-    <h2>Practise a little, every day.</h2>
-    <p style="margin:8px 0;">A few short exercises. That's the whole idea.</p>
-    <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:12px;">
-      <button class="login" style="font-size:15px;padding:9px 18px;" id="loginBtn">Log in with Google</button>
-      <button class="act" style="font-size:15px;padding:9px 18px;" id="guestBtn">Try it as a guest</button>
-    </div>
-    <p class="muted" style="margin-top:10px;">Guest work is saved on this device only.</p>
-  </div>
 </div>
 <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-auth-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-firestore-compat.js"></script>
-<script src="config.js?v=1"></script>
-<script src="shared.js?v=1"></script>
+<script src="config.js?v=3"></script>
+<script src="shared.js?v=3"></script>
 <script>
-$("guestBtn").onclick=function(){ LS.set("guest",true); location.href="student.html"; };
-$("loginBtn").onclick=function(){
-  signIn().catch(function(e){ $("msg").appendChild(errBox("Sign-in failed: "+e.message)); });
-};
-siteRef.get().then(function(d){
-  if(d.exists && d.data().title) $("siteTitle").textContent=d.data().title;
-}).catch(function(){});
+/* There is no landing page any more. Everyone lands on the student dash;
+   this file only exists so old links and the sign-out redirect still work. */
+var sent=false;
+function goTo(where){ if(sent) return; sent=true; location.replace(where); }
+var fallback=setTimeout(function(){ LS.set("guest",true); goTo("student.html"); }, 1200);
 
 auth.onAuthStateChanged(function(u){
-  if(!u) return;
+  clearTimeout(fallback);
+  if(!u){ LS.set("guest",true); goTo("student.html"); return; }
   resolveRole(u,function(role){
-    if(role==="teacher"){ location.href="teacher.html"; return; }
-    if(role==="student"){ location.href="student.html"; return; }
-    // pending: create a request record then show waiting note
-    studentsCol.doc(u.uid).set({
-      email:u.email, name:u.displayName||u.email, photo:u.photoURL||"",
-      status:"pending", requestedAt:firebase.firestore.FieldValue.serverTimestamp()
-    },{merge:true}).catch(function(){});
-    clear($("loginCard"));
-    var c=$("loginCard");
-    c.appendChild(el("h2",null,"Thanks — you're on the list."));
-    c.appendChild(el("p",null,"Your tutor needs to approve this account. Try again once they have."));
-    var bar=el("div"); bar.style.marginTop="10px";
-    bar.appendChild(mkBtn("Practise as a guest meanwhile","act",function(){
-      LS.set("guest",true); location.href="student.html"; }));
-    bar.appendChild(mkBtn("Log out","out",function(){ signOutNow().then(function(){location.reload();}); }));
-    c.appendChild(bar);
+    if(role==="teacher"){ goTo("teacher.html"); return; }
+    if(role==="parent"){ goTo("parent.html"); return; }
+    /* student, pending and removed all land on the dash — it explains itself there */
+    goTo("student.html");
   });
 });
 </script>

@@ -20,10 +20,11 @@ function defaults(){
   return { days:40, apSkip:5, skipCaption:"Or wait until 12AM PST.", invPages:10, topScreen:"top",
     restartText:"Would you like to RESTART this game? You will lose ALL OF YOUR STATS. "+
       "(Take a screenshot if you'd like!) You will only get to keep your ✨AP, 🪙coins, and your inventory!",
-    stats:[{name:"Smarts",start:0,max:99,inHeader:false,keepOnRestart:false},
-           {name:"Strength",start:0,max:99,inHeader:false,keepOnRestart:false},
-           {name:"Gold",emoji:"🪙",start:0,max:99999,inHeader:true,keepOnRestart:true}],
-    items:[], convert:{label:"Convert ✨ to…",pic:"",cats:[]}, endings:{} };
+    statPages:["General stats"],
+    stats:[{name:"Smarts",page:"General stats",start:0,max:99,inHeader:false,keepOnRestart:false},
+           {name:"Strength",page:"General stats",start:0,max:99,inHeader:false,keepOnRestart:false},
+           {name:"Gold",emoji:"🪙",page:"General stats",start:0,max:99999,inHeader:true,keepOnRestart:true}],
+    items:[], stocks:[], convert:{label:"Convert ✨ to…",pic:"",cats:[]}, endings:{} };
 }
 function saveAll(){
   flash(msg,"Saving…",8000);
@@ -36,8 +37,9 @@ function saveAll(){
     .catch(function(e){ flash(msg,"Could not save: "+e.message,6000); });
 }
 
-var TABS=[["map","Screen map"],["screen","Edit a screen"],["stats","Stats"],["items","Items"],
-  ["endings","Endings"],["convert","Convert"],["rules","Rules & publish"]];
+var TABS=[["map","Screen map"],["screen","Edit a screen"],["stats","Stats"],["titles","Titles"],
+  ["items","Items"],["stocks","Stocks"],["endings","Endings"],["convert","Convert"],
+  ["rules","Rules & publish"]];
 function drawTabs(){
   var t=$("tabs"); clear(t);
   TABS.forEach(function(p){
@@ -51,7 +53,9 @@ function drawPanel(){
   if(TAB==="map") return panMap(p);
   if(TAB==="screen") return panScreen(p);
   if(TAB==="stats") return panStats(p);
+  if(TAB==="titles") return panTitles(p);
   if(TAB==="items") return panItems(p);
+  if(TAB==="stocks") return panStocks(p);
   if(TAB==="endings") return panEndings(p);
   if(TAB==="convert") return panConvert(p);
   if(TAB==="rules") return panRules(p);
@@ -97,23 +101,44 @@ function panMap(p){
   Object.keys(SCREENS).forEach(function(id){
     (SCREENS[id].buttons||[]).forEach(function(b){ if(b.leads) reached[b.leads]=id; });
   });
+  CFG.screenOrder = (CFG.screenOrder||[]).filter(function(id){ return SCREENS[id]; });
+  Object.keys(SCREENS).forEach(function(id){
+    if(CFG.screenOrder.indexOf(id)<0) CFG.screenOrder.push(id); });
+
   var t=el("table"); c.appendChild(t);
   var hr=document.createElement("tr");
-  ["Screen","Type","Buttons","Reached from",""].forEach(function(h){ hr.appendChild(el("th",null,h)); });
+  ["Order","Screen","Type","Buttons","Reached from",""].forEach(function(h){ hr.appendChild(el("th",null,h)); });
   t.appendChild(hr);
-  Object.keys(SCREENS).forEach(function(id){
+  CFG.screenOrder.forEach(function(id,oi){
     var s=SCREENS[id];
     var tr=document.createElement("tr");
+    var tdo=el("td");
+    tdo.appendChild(mkBtn("▲","",function(){
+      if(oi>0){ var a=CFG.screenOrder; var x=a[oi-1]; a[oi-1]=a[oi]; a[oi]=x; drawPanel(); } }));
+    tdo.appendChild(mkBtn("▼","",function(){
+      var a=CFG.screenOrder;
+      if(oi<a.length-1){ var x=a[oi+1]; a[oi+1]=a[oi]; a[oi]=x; drawPanel(); } }));
+    tr.appendChild(tdo);
     var td=el("td");
     td.appendChild(el("strong",null,s.label||id));
     td.appendChild(el("span","muted"," ("+id+")"));
     if(id===CFG.topScreen) td.appendChild(el("span","tag","start"));
     tr.appendChild(td);
-    tr.appendChild(el("td",null, s.type===2?"2 · Info only":(s.type===3?"3 · Nested":"1 · Buttons")));
-    tr.appendChild(el("td",null, s.type===2?"—":String((s.buttons||[]).length)+" in pool"));
+    tr.appendChild(el("td",null, typeLabel(s.type)));
+    tr.appendChild(el("td",null, (s.type||1)===1 ? (String((s.buttons||[]).length)+" in pool") : "—"));
     tr.appendChild(el("td","muted", id===CFG.topScreen ? "— the start —" : (reached[id]||"nothing leads here")));
     var td2=el("td");
     td2.appendChild(mkBtn("Edit","edit",function(){ EDIT=id; TAB="screen"; drawTabs(); drawPanel(); }));
+    td2.appendChild(mkBtn("Duplicate","",function(){
+      var nid=prompt("Id for the copy:", id+"2");
+      if(!nid) return;
+      nid=nid.replace(/[^A-Za-z0-9_]/g,"");
+      if(SCREENS[nid]){ alert("That id already exists."); return; }
+      var copy=JSON.parse(JSON.stringify(s)); copy.id=nid;
+      copy.label=(s.label||id)+" (copy)";
+      (copy.buttons||[]).forEach(function(b){ b.id="b"+Math.random().toString(36).slice(2,8); });
+      SCREENS[nid]=copy; CFG.screenOrder.push(nid); drawPanel();
+    }));
     if(id!==CFG.topScreen) td2.appendChild(mkBtn("✕","del",function(){
       if(!confirm("Delete screen \""+id+"\"? Buttons pointing here will stop working.")) return;
       screensCol.doc(id).delete().catch(function(){});
@@ -124,7 +149,14 @@ function panMap(p){
   });
   c.appendChild(el("p","muted",
     'Point a button at a screen using "Leads to" in the button editor. '+
-    'The start screen is set on the Rules tab.'));
+    'The start screen is set on the Rules tab. ▲▼ changes the order shown here.'));
+}
+function moveScreen(id,dir){
+  var ids=Object.keys(SCREENS), i=ids.indexOf(id), j=i+dir;
+  if(i<0||j<0||j>=ids.length) return;
+  ids[i]=ids[j]; ids[j]=id;
+  var re={}; ids.forEach(function(k){ re[k]=SCREENS[k]; });
+  SCREENS=re; drawPanel();
 }
 
 /* ---------- edit a screen ---------- */
@@ -141,14 +173,14 @@ function panScreen(p){
     saveAll().then(function(){ window.open("game.html","_blank"); }); }));
   head.appendChild(ctr); c.appendChild(head);
 
-  c.appendChild(el("div","lab","Screen name (shown on the Back button)"));
+  c.appendChild(el("div","lab","Screen name (shown on the framed button)"));
   c.appendChild(inp(s.label,"text",function(v){ s.label=v; }));
-  c.appendChild(el("div","lab","Image for this screen (used as its Back button)"));
+  c.appendChild(el("div","lab","Image for this screen"));
   c.appendChild(inp(s.pic,"url",function(v){ s.pic=v; }));
 
   c.appendChild(el("div","lab","Page type"));
   var tp=el("div"); tp.style.cssText="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:10px;";
-  [[1,"1 · Buttons"],[2,"2 · Info only"],[3,"3 · Nested"]].forEach(function(o){
+  [[1,"1 · Buttons"],[2,"2 · Info only"],[3,"3 · Counter"],[4,"4 · Market"]].forEach(function(o){
     var l=el("label"); l.style.cssText="border:1px solid #000;padding:5px 10px;font-size:13px;width:auto;cursor:pointer;"+
       ((s.type||1)===o[0]?"background:#000;color:#fff;font-weight:bold;":"background:#fff;");
     var r=document.createElement("input"); r.type="radio"; r.name="pt"; r.checked=((s.type||1)===o[0]);
@@ -183,13 +215,35 @@ function panScreen(p){
     }
     renderImgs();
     c.appendChild(mkBtn("+ Add image","act",function(){ s.images.push({url:"",caption:""}); renderImgs(); }));
+    c.appendChild(el("div","lab","Narrative text at the bottom of this page (optional)"));
+    var frb2=richBox(s.footText||"", "e.g. What do you do next?");
+    frb2.box.oninput=function(){ s.footText=frb2.getValue(); };
+    c.appendChild(frb2);
     return;
   }
+
+  if(s.type===3){ panCounter(c,s); return; }
+  if(s.type===4){ panMarket(c,s); return; }
 
   var r=el("div","fxrow");
   r.appendChild(el("span","muted","Buttons shown per page")).style.width="150px";
   r.appendChild(inp(s.perPage||4,"number",function(v){ s.perPage=v||4; }));
   c.appendChild(r);
+  var r2=el("div","fxrow");
+  r2.appendChild(el("span","muted","Unavailable buttons")).style.width="150px";
+  r2.appendChild(selectFrom(["black","hide"], s.hideEmpty?"hide":"black",
+    function(v){ s.hideEmpty=(v==="hide"); },
+    function(v){ return v==="hide"?"Hide them entirely":"Show a blacked-out ??? box"; },"250px"));
+  c.appendChild(r2);
+  c.appendChild(el("div","lab","Narrative text shown at the bottom of this screen (optional)"));
+  var frb=richBox(s.footText||"","e.g. What do you do next?");
+  frb.box.oninput=function(){ s.footText=frb.getValue(); };
+  c.appendChild(frb);
+
+  c.appendChild(el("div","lab","Narrative text at the bottom of this page (optional)"));
+  var frb=richBox(s.footText||"", "e.g. What do you do next?");
+  frb.box.oninput=function(){ s.footText=frb.getValue(); };
+  c.appendChild(frb);
 
   c.appendChild(el("h3",null,"Button pool"));
   c.appendChild(el("p","muted","Each day the game picks from this pool: conditions first, then times-per-run, then chance."));
@@ -210,6 +264,15 @@ function panScreen(p){
       tr.appendChild(el("td","muted",b.leads||"— stay —"));
       var td=el("td");
       td.appendChild(mkBtn("Edit","edit",function(){ openButton(s,b,i); }));
+      td.appendChild(mkBtn("Duplicate","",function(){
+        var copy=JSON.parse(JSON.stringify(b));
+        copy.id="b"+Date.now().toString(36);
+        copy.label=(b.label||"button")+" (copy)";
+        s.buttons.splice(i+1,0,copy); renderPool(); }));
+      td.appendChild(mkBtn("▲","",function(){ if(i>0){ var x=s.buttons[i-1];
+        s.buttons[i-1]=s.buttons[i]; s.buttons[i]=x; renderPool(); } }));
+      td.appendChild(mkBtn("▼","",function(){ if(i<s.buttons.length-1){ var x=s.buttons[i+1];
+        s.buttons[i+1]=s.buttons[i]; s.buttons[i]=x; renderPool(); } }));
       td.appendChild(mkBtn("✕","del",function(){ s.buttons.splice(i,1); renderPool(); }));
       tr.appendChild(td); t.appendChild(tr);
     });
@@ -273,7 +336,8 @@ function panScreen(p){
       hr2.appendChild(el("span","muted","If it can't appear")).style.width="125px";
       hr2.appendChild(selectFrom(["black","none"], sc.hideEmpty?"none":"black",
         function(v){ sc.hideEmpty=(v==="none"); },
-        function(v){ return v==="black"?"Show a blacked-out ??? box":"Show nothing"; }, "230px"));
+        function(v){ return v==="black"?"Show a blacked-out ??? box":
+          "Hide it completely (nothing shows)"; }, "250px"));
       condHost.appendChild(hr2);
     }
     renderConds();
@@ -305,34 +369,43 @@ function panScreen(p){
       clear(fxHost);
       var t=el("table");
       var hr=document.createElement("tr");
-      ["Do what","To what","How much",""].forEach(function(h){ hr.appendChild(el("th",null,h)); });
+      ["Give / take","What","How much",""].forEach(function(h){ hr.appendChild(el("th",null,h)); });
       t.appendChild(hr);
       b.fx.forEach(function(f,fi){
         var tr=document.createElement("tr");
         var td1=el("td");
-        td1.appendChild(selectFrom(["stat","item"], f.kind==="item"?"item":"stat",
-          function(v){ f.kind=v; renderFx(); renderPool(); },
-          function(v){ return v==="item"?"Give / take item":"Change stat"; }));
+        td1.appendChild(selectFrom(["give","take"], f.dir||"give",
+          function(v){ f.dir=v; renderFx(); renderPool(); },
+          function(v){ return v==="give"?"Give":"Take away"; }, "90px"));
         tr.appendChild(td1);
         var td2=el("td");
+        var kindSel=selectFrom(["stat","item"], f.kind==="item"?"item":"stat",
+          function(v){ f.kind=v; renderFx(); renderPool(); },
+          function(v){ return v==="item"?"an item":"a stat"; }, "80px");
+        td2.appendChild(kindSel);
         if(f.kind==="item")
           td2.appendChild(selectFrom((CFG.items||[]).map(function(x){return x.name;}), f.target,
-            function(v){ f.target=v; renderPool(); }));
+            function(v){ f.target=v; renderPool(); },null,"110px"));
         else
-          td2.appendChild(selectFrom(statNames(), f.target, function(v){ f.target=v; renderPool(); }, statLabel));
+          td2.appendChild(selectFrom(statNames(), f.target,
+            function(v){ f.target=v; renderPool(); }, statLabel,"110px"));
         tr.appendChild(td2);
         var td3=el("td"); var row=el("div","fxrow"); row.style.margin="0";
-        if(f.kind!=="item")
-          row.appendChild(selectFrom(["+","-","x","/","="], f.op||"+", function(v){ f.op=v; renderPool(); },
-            null, "56px"));
-        row.appendChild(inp(f.amount,"number",function(v){ f.amount=v; renderPool(); }));
+        row.appendChild(inp(Math.abs(f.amount||0),"number",function(v){
+          f.amount=Math.abs(v)||0; renderPool(); }));
+        if(f.kind!=="item"){
+          row.appendChild(selectFrom(["+","x","/","="], (f.op&&f.op!=="-")?f.op:"+",
+            function(v){ f.op=v; renderPool(); },
+            function(v){ return {"+":"plain","x":"multiply","/":"divide","=":"set to"}[v]; }, "90px"));
+        }
         td3.appendChild(row); tr.appendChild(td3);
         var td4=el("td"); td4.appendChild(mkBtn("✕","del",function(){ b.fx.splice(fi,1); renderFx(); renderPool(); }));
         tr.appendChild(td4); t.appendChild(tr);
       });
       fxHost.appendChild(t);
       fxHost.appendChild(mkBtn("+ Add an effect","act",function(){
-        b.fx.push({kind:"stat",target:statNames()[1]||"__AP__",op:"+",amount:1}); renderFx(); renderPool(); }));
+        b.fx.push({dir:"give",kind:"stat",target:statNames()[1]||"__AP__",op:"+",amount:1});
+        renderFx(); renderPool(); }));
       fxHost.appendChild(el("p","muted","Shows on the button as: "+
         ((b.fx||[]).map(fxText).join(" ")||"—")));
     }
@@ -345,6 +418,15 @@ function panScreen(p){
     var ta=document.createElement("textarea"); ta.style.minHeight="42px"; ta.value=b.message||"";
     ta.oninput=function(){ b.message=ta.value; };
     then.appendChild(ta);
+    then.appendChild(el("div","lab","Unlocks (type a keyword — other buttons can wait for it)"));
+    then.appendChild(inp(b.setsFlag,"text",function(v){ b.setsFlag=v.trim(); }));
+    then.appendChild(el("div","lab","Only appears after this keyword is unlocked"));
+    then.appendChild(inp(b.needsFlag,"text",function(v){ b.needsFlag=v.trim(); }));
+    then.appendChild(el("div","lab","Disappears once this keyword is unlocked"));
+    then.appendChild(inp(b.hiddenByFlag,"text",function(v){ b.hiddenByFlag=v.trim(); }));
+    then.appendChild(el("p","muted",
+      'Example: an "Unlock the bakery" button sets <code>bakery</code>, hides itself with '+
+      '<code>bakery</code>, and the real Bakery button needs <code>bakery</code>.'));
     right.appendChild(then);
 
     grid.appendChild(right);
@@ -364,15 +446,256 @@ function condText(c){
 }
 function fxText(f){
   if(!f) return "";
-  if(f.kind==="item") return "("+(f.amount>0?"Get":"Lose")+": "+f.target+")";
+  var n=Math.abs(Number(f.amount)||0);
+  if(f.kind==="item") return "("+(f.dir==="take"?"Lose":"Get")+": "+f.target+(n>1?(" ×"+n):"")+")";
   var nm=f.target==="__AP__"?"✨":f.target;
-  if(f.op==="x") return "("+nm+"×"+f.amount+")";
-  if(f.op==="=") return "("+nm+"="+f.amount+")";
-  return "("+nm+(f.amount>=0?"+":"")+f.amount+")";
+  if(f.op==="x") return "("+nm+"×"+n+")";
+  if(f.op==="=") return "("+nm+"="+n+")";
+  return "("+nm+(f.dir==="take"?"−":"+")+n+")";
 }
 
 /* ---------- stats ---------- */
+function typeLabel(t){
+  if(t===2) return "2 · Info only";
+  if(t===3) return "3 · Counter";
+  if(t===4) return "4 · Market";
+  return "1 · Buttons";
+}
+function labelledRow(parent, label, node, w){
+  var r=el("div","fxrow");
+  var sp=el("span","muted",label); sp.style.width=(w||"180px"); sp.style.flex="none";
+  r.appendChild(sp); r.appendChild(node);
+  parent.appendChild(r);
+  return r;
+}
+function narrativeField(c, s, hint){
+  c.appendChild(el("div","lab","Narrative text at the bottom of this screen (optional)"));
+  var rb=richBox(s.footText||"", hint||"e.g. What do you do next?");
+  rb.box.oninput=function(){ s.footText=rb.getValue(); };
+  c.appendChild(rb);
+  c.appendChild(el("p","muted","It sits under the framed centre button, indented a third of the way in."));
+}
+
+/* ---------- page type 3 · Counter ---------- */
+function panCounter(c, s){
+  if(!s.counterMode) s.counterMode="bank";
+  labelledRow(c, "This counter is a…",
+    selectFrom(["bank","store"], s.counterMode, function(v){ s.counterMode=v; drawPanel(); },
+      function(v){ return v==="store" ? "Store (buy / sell items)" : "Bank (deposit / withdraw)"; },
+      "230px"));
+
+  if(s.counterMode==="store"){
+    c.appendChild(el("h3",null,"Store settings"));
+    labelledRow(c, "What's for sale",
+      selectFrom(["all","pick"], (s.stockList&&s.stockList.length)?"pick":"all",
+        function(v){ s.stockList = (v==="pick") ? (s.stockList||[]) : null; drawPanel(); },
+        function(v){ return v==="pick" ? "Only the items I pick" : "Everything with a buy price"; },
+        "260px"));
+    if(s.stockList){
+      var pick=el("div"); pick.style.cssText="border:1px solid #000;background:#fff;padding:8px;margin-top:6px;";
+      (CFG.items||[]).forEach(function(it){
+        if(it.buy===undefined||it.buy===null||it.buy==="") return;
+        var lb=el("label"); lb.style.cssText="width:auto;display:block;margin:2px 0;";
+        var cb=document.createElement("input"); cb.type="checkbox";
+        cb.checked = s.stockList.indexOf(it.name)>=0;
+        cb.onchange=function(){
+          if(cb.checked) s.stockList.push(it.name);
+          else s.stockList=s.stockList.filter(function(n){ return n!==it.name; });
+        };
+        lb.appendChild(cb); lb.appendChild(document.createTextNode(" "+it.name+" — 🪙"+it.buy));
+        pick.appendChild(lb);
+      });
+      if(!pick.childNodes.length) pick.appendChild(el("p","muted","No items have a buy price yet."));
+      c.appendChild(pick);
+    }
+    var sellCb=document.createElement("input"); sellCb.type="checkbox";
+    sellCb.checked = s.allowSell!==false;
+    sellCb.onchange=function(){ s.allowSell=sellCb.checked; };
+    var sl=el("label"); sl.style.cssText="width:auto;display:block;margin-top:8px;";
+    sl.appendChild(sellCb); sl.appendChild(document.createTextNode(" They may sell things here"));
+    c.appendChild(sl);
+
+    var pctIn = inp(s.defaultSellPct===undefined?50:s.defaultSellPct,"number",
+      function(v){ s.defaultSellPct=v; });
+    labelledRow(c, "Default sell price", pctIn);
+    c.appendChild(el("p","muted","A percentage of the buy price. Override it per item on the Items tab. "+
+      "An item with no buy price can't be bought or sold at all — that's how quest items stay safe."));
+    c.appendChild(el("h3",null,"Button images"));
+    labelledRow(c, "Buy button image", inp(s.buyPic,"url",function(v){ s.buyPic=v; }));
+    labelledRow(c, "Sell button image", inp(s.sellPic,"url",function(v){ s.sellPic=v; }));
+  } else {
+    c.appendChild(el("h3",null,"Bank settings"));
+    labelledRow(c, "Which stat is stored",
+      selectFrom(statNames().filter(function(n){return n!=="__AP__";}), s.statName||goldGuess(),
+        function(v){ s.statName=v; }, statLabel, "180px"));
+    labelledRow(c, "Interest per day", inp(s.interest||0,"number",function(v){ s.interest=v; }));
+    labelledRow(c, "Maximum balance", inp(s.maxBalance||0,"number",function(v){ s.maxBalance=v; }));
+    c.appendChild(el("p","muted","0 means no limit. Interest lands when the day rolls over — including "+
+      "when a student pays ✨ to skip a day, so ✨ speeds up their savings too."));
+    c.appendChild(el("h3",null,"Button images"));
+    labelledRow(c, "Deposit button image", inp(s.depositPic,"url",function(v){ s.depositPic=v; }));
+    labelledRow(c, "Withdraw button image", inp(s.withdrawPic,"url",function(v){ s.withdrawPic=v; }));
+  }
+  narrativeField(c, s, "Leave blank and the balance line is written for you.");
+}
+function goldGuess(){
+  var g=null; (CFG.stats||[]).forEach(function(x){ if(x.emoji==="🪙") g=x.name; });
+  return g || (statNames().filter(function(n){return n!=="__AP__";})[0] || "Gold");
+}
+
+/* ---------- page type 4 · Market ---------- */
+function panMarket(c, s){
+  c.appendChild(el("h3",null,"Market settings"));
+  labelledRow(c, "Which stat buys shares",
+    selectFrom(statNames().filter(function(n){return n!=="__AP__";}), s.statName||goldGuess(),
+      function(v){ s.statName=v; }, statLabel, "180px"));
+  var dcb=document.createElement("input"); dcb.type="checkbox";
+  dcb.checked=!!s.detailsOpen;
+  dcb.onchange=function(){ s.detailsOpen=dcb.checked; };
+  var dl=el("label"); dl.style.cssText="width:auto;display:block;margin-top:8px;";
+  dl.appendChild(dcb); dl.appendChild(document.createTextNode(" Show the table and chart straight away"));
+  c.appendChild(dl);
+  c.appendChild(el("p","muted","Off by default — arriving shows just Buy, Sell and a See details button."));
+  labelledRow(c, "Sell price cut", inp(s.sellCutPct||0,"number",function(v){ s.sellCutPct=v; }));
+  c.appendChild(el("p","muted","A percentage taken off today's price when selling. 0 means they sell at "+
+    "full price, which is the usual choice for a stock market."));
+  c.appendChild(el("h3",null,"Button images"));
+  labelledRow(c, "Buy button image", inp(s.buyPic,"url",function(v){ s.buyPic=v; }));
+  labelledRow(c, "Sell button image", inp(s.sellPic,"url",function(v){ s.sellPic=v; }));
+  c.appendChild(el("p","muted","The stocks themselves live on the Stocks tab, so several market screens "+
+    "can share the same companies."));
+  narrativeField(c, s);
+}
+
+/* ---------- Stocks tab ---------- */
+var TRACK_OPTS=["random","increase","decrease","stable","wild"];
+function trackLabel(v){
+  return {random:"Random", increase:"Increase", decrease:"Decrease",
+          stable:"Stable", wild:"Wild"}[v] || v;
+}
+function panStocks(p){
+  CFG.stocks = CFG.stocks || [];
+  var c=el("div","card t"); p.appendChild(c);
+  c.appendChild(el("h2",null,"Stocks"));
+  c.appendChild(el("p","muted","Shared by every Market screen. Prices are worked out from each "+
+    "student's own run seed, so no two students see the same market and replaying gives a new one."));
+
+  var t=el("table"); t.style.marginTop="8px"; c.appendChild(t);
+  function render(){
+    clear(t);
+    var hr=document.createElement("tr");
+    ["Ticker","Description","Colour","Low","High","Starts at","Starting track","Switch %/day",""]
+      .forEach(function(h){ hr.appendChild(el("th",null,h)); });
+    t.appendChild(hr);
+    CFG.stocks.forEach(function(st,i){
+      var tr=document.createElement("tr");
+      var t1=el("td");
+      var ti=inp(st.ticker,"text",function(v){ st.ticker=v.toUpperCase().slice(0,3); });
+      ti.maxLength=3; ti.style.width="66px"; t1.appendChild(ti); tr.appendChild(t1);
+      var t2=el("td"); t2.appendChild(inp(st.desc,"text",function(v){ st.desc=v; })); tr.appendChild(t2);
+      var t3=el("td");
+      var col=document.createElement("input"); col.type="color";
+      col.value=st.color||"#333333"; col.style.cssText="height:26px;padding:1px;width:56px;";
+      col.oninput=function(){ st.color=col.value; };
+      t3.appendChild(col); tr.appendChild(t3);
+      var t4=el("td"); t4.appendChild(inp(st.low===undefined?1:st.low,"number",
+        function(v){ st.low=v; })); tr.appendChild(t4);
+      var t5=el("td"); t5.appendChild(inp(st.high===undefined?20:st.high,"number",
+        function(v){ st.high=v; })); tr.appendChild(t5);
+      var t6=el("td");
+      var si=inp(st.start===undefined?"":st.start,"number",function(v){ st.start=v; });
+      si.placeholder="random"; t6.appendChild(si); tr.appendChild(t6);
+      var t7=el("td");
+      t7.appendChild(selectFrom(TRACK_OPTS, st.startTrack||"random",
+        function(v){ st.startTrack=v; }, trackLabel, "120px")); tr.appendChild(t7);
+      var t8=el("td"); t8.appendChild(inp(st.switchPct===undefined?25:st.switchPct,"number",
+        function(v){ st.switchPct=v; })); tr.appendChild(t8);
+      var t9=el("td");
+      t9.appendChild(mkBtn("✕","del",function(){ CFG.stocks.splice(i,1); render(); }));
+      tr.appendChild(t9);
+      t.appendChild(tr);
+    });
+  }
+  render();
+  c.appendChild(mkBtn("+ Add stock","act",function(){
+    CFG.stocks.push({ticker:"NEW",desc:"New company",color:"#333333",
+      low:1,high:20,start:"",startTrack:"random",switchPct:8});
+    render();
+  }));
+
+  var d=el("div","card t"); p.appendChild(d);
+  d.appendChild(el("h2",null,"The four tracks"));
+  var tt=el("table"); tt.style.cssText="margin-top:8px;max-width:640px;";
+  var hh=document.createElement("tr");
+  ["Track","What it does","Example"].forEach(function(h){ hh.appendChild(el("th",null,h)); });
+  tt.appendChild(hh);
+  [["Increase","Drifts up by a random amount each day","1 → 3 → 6 → 6 → 9"],
+   ["Decrease","Drifts down by a random amount each day","12 → 11 → 7 → 6 → 4"],
+   ["Stable","Hovers near where it already is","5 → 7 → 6 → 5 → 6"],
+   ["Wild","Can jump anywhere between low and high","4 → 18 → 6 → 19 → 2"]].forEach(function(r){
+    var tr=document.createElement("tr");
+    tr.appendChild(el("td")).innerHTML="<strong>"+r[0]+"</strong>";
+    tr.appendChild(el("td",null,r[1]));
+    tr.appendChild(el("td","muted",r[2]));
+    tt.appendChild(tr);
+  });
+  d.appendChild(tt);
+  d.appendChild(el("p","muted","Each day there's a switch chance that a stock changes track. "+
+    "Over a 40-day run, 25% means it switches about 10 times — busy, and hard to read a trend. "+
+    "Around 5–10% gives roughly 2–4 turning points, which is long enough for a student to "+
+    "notice a stock is climbing and decide to buy. Start low. "+
+    "Prices never leave the low–high range."));
+}
+
 function panStats(p){
+  /* ---- the pages first: name them and put them in order ---- */
+  CFG.statPages = CFG.statPages || ["General stats"];
+  var pc=el("div","card t"); p.appendChild(pc);
+  pc.appendChild(el("h2",null,"Stat pages"));
+  pc.appendChild(el("p","muted","These are the pages the ◀ ▶ arrows flip through in the Me panel, "+
+    "in this order. A page with no stats on it is skipped, so you can leave spares set up."));
+  var pt=el("table"); pt.style.cssText="margin-top:8px;max-width:520px;"; pc.appendChild(pt);
+  function renderPages(){
+    clear(pt);
+    var hr=document.createElement("tr");
+    ["Order","Page name",""].forEach(function(h){ hr.appendChild(el("th",null,h)); });
+    pt.appendChild(hr);
+    CFG.statPages.forEach(function(nm,i){
+      var tr=document.createElement("tr");
+      var a=el("td","mid");
+      a.appendChild(mkBtn("▲","",function(){ movePage(i,-1); }));
+      a.appendChild(mkBtn("▼","",function(){ movePage(i, 1); }));
+      tr.appendChild(a);
+      var b=el("td");
+      b.appendChild(inp(nm,"text",function(v){
+        var old=CFG.statPages[i];
+        CFG.statPages[i]=v;
+        /* keep the stats pointing at it */
+        (CFG.stats||[]).forEach(function(st){ if(st.page===old) st.page=v; });
+      }));
+      tr.appendChild(b);
+      var d=el("td","mid");
+      d.appendChild(mkBtn("✕","del",function(){
+        var gone=CFG.statPages[i];
+        if(CFG.statPages.length<2){ alert("You need at least one stat page."); return; }
+        CFG.statPages.splice(i,1);
+        (CFG.stats||[]).forEach(function(st){ if(st.page===gone) st.page=CFG.statPages[0]; });
+        drawPanel();
+      }));
+      tr.appendChild(d);
+      pt.appendChild(tr);
+    });
+  }
+  function movePage(i,dir){
+    var j=i+dir;
+    if(j<0||j>=CFG.statPages.length) return;
+    var tmp=CFG.statPages[i]; CFG.statPages[i]=CFG.statPages[j]; CFG.statPages[j]=tmp;
+    renderPages();
+  }
+  renderPages();
+  pc.appendChild(mkBtn("+ Add stat page","act",function(){
+    CFG.statPages.push("New page"); drawPanel(); }));
+
   var c=el("div","card t"); p.appendChild(c);
   c.appendChild(el("h2",null,"Stats"));
   CFG.stats=CFG.stats||[];
@@ -380,11 +703,15 @@ function panStats(p){
   function render(){
     clear(t);
     var hr=document.createElement("tr");
-    ["Name","Starts","Max","Header emoji","On restart",""].forEach(function(h){ hr.appendChild(el("th",null,h)); });
+    ["Name","Stat page","Starts","Max","Header emoji","On restart",""].forEach(function(h){ hr.appendChild(el("th",null,h)); });
     t.appendChild(hr);
     CFG.stats.forEach(function(s,i){
       var tr=document.createElement("tr");
       var a=el("td"); a.appendChild(inp(s.name,"text",function(v){ s.name=v; })); tr.appendChild(a);
+      var gg=el("td");
+      gg.appendChild(selectFrom(CFG.statPages, s.page||CFG.statPages[0],
+        function(v){ s.page=v; }, function(v){ return v; }, "150px"));
+      tr.appendChild(gg);
       var b=el("td"); b.appendChild(inp(s.start||0,"number",function(v){ s.start=v; })); tr.appendChild(b);
       var d=el("td"); d.appendChild(inp(s.max||99,"number",function(v){ s.max=v; })); tr.appendChild(d);
       var e=el("td"); e.appendChild(inp(s.emoji||"","text",function(v){ s.emoji=v; },"70px"));
@@ -403,14 +730,17 @@ function panStats(p){
   }
   render();
   c.appendChild(mkBtn("+ Add stat","act",function(){
-    CFG.stats.push({name:"New stat",start:0,max:99,inHeader:false,keepOnRestart:false}); render(); }));
+    CFG.stats.push({name:"New stat",page:CFG.statPages[0],start:0,max:99,
+      inHeader:false,keepOnRestart:false});
+    render(); }));
   c.appendChild(el("p","muted",
     "Effects read name first, no space: (Smarts+1), (✨−1), (Strength×2). "+
-    "✨ AP is not a stat here — it comes from practice and is always in the header. "+
-    "Division rounds down and never goes below zero."));
+    "✨ AP is not a stat here — it comes from practice and is always on page 1. "+
+    "Division rounds down and never goes below zero. A stat with no header emoji stays "+
+    "out of the way, which is how a hidden counter like \"Cookies baked\" can quietly feed a title."));
 }
 
-/* ---------- items ---------- */
+/* ---------- titles ---------- */
 function panItems(p){
   var c=el("div","card t"); p.appendChild(c);
   c.appendChild(el("h2",null,"Items"));
@@ -736,4 +1066,82 @@ function panRules(p){
   bar.appendChild(mkBtn("👁 Play the live game","edit",function(){
     saveAll().then(function(){ window.open("game.html","_blank"); }); }));
   c2.appendChild(bar);
+}
+
+/* ---------- titles ---------- */
+function panTitles(p){
+  var c=el("div","card t"); p.appendChild(c);
+  c.appendChild(el("h2",null,"Titles"));
+  c.appendChild(el("p","muted",
+    "Each line is one independent title slot shown under the character on the top page and in the Me panel. "+
+    "Within a line, the LAST matching level wins — so order them easiest first (Junior baker, then Senior baker)."));
+  CFG.titles=CFG.titles||[];
+  var host=el("div"); c.appendChild(host);
+  function render(){
+    clear(host);
+    CFG.titles.forEach(function(line,li){
+      var box=el("div"); box.style.cssText="border:1px solid #000;background:#fff;padding:10px;margin-bottom:10px;";
+      var hd=el("div","cardhead");
+      hd.appendChild(el("strong",null,"Line "+(li+1)));
+      var hc=el("div","ctrls");
+      hc.appendChild(mkBtn("▲","",function(){ if(li>0){ var x=CFG.titles[li-1];
+        CFG.titles[li-1]=CFG.titles[li]; CFG.titles[li]=x; render(); } }));
+      hc.appendChild(mkBtn("▼","",function(){ if(li<CFG.titles.length-1){ var x=CFG.titles[li+1];
+        CFG.titles[li+1]=CFG.titles[li]; CFG.titles[li]=x; render(); } }));
+      hc.appendChild(mkBtn("✕ Delete line","del",function(){ CFG.titles.splice(li,1); render(); }));
+      hd.appendChild(hc); box.appendChild(hd);
+
+      line.levels=line.levels||[];
+      var t=el("table"); t.style.marginTop="8px";
+      var hr=document.createElement("tr");
+      ["#","Title shown","Earned when… (all true)",""].forEach(function(h){ hr.appendChild(el("th",null,h)); });
+      t.appendChild(hr);
+      line.levels.forEach(function(lv,vi){
+        var tr=document.createElement("tr");
+        tr.appendChild(el("td",null,String(vi+1)));
+        var a=el("td"); a.appendChild(inp(lv.label,"text",function(v){ lv.label=v; })); tr.appendChild(a);
+        var b=el("td");
+        lv.conds=lv.conds||[];
+        function renderConds(){
+          clear(b);
+          if(!lv.conds.length) b.appendChild(el("span","muted","Always (shows from the start)"));
+          lv.conds.forEach(function(cd,ci){
+            var r=el("div","fxrow");
+            r.appendChild(selectFrom(["stat_min","stat_max","has","not_has"], cd.kind,
+              function(v){ cd.kind=v; renderConds(); },
+              function(v){ return {stat_min:"≥",stat_max:"≤",has:"Has item",not_has:"No item"}[v]; },"88px"));
+            if(cd.kind==="has"||cd.kind==="not_has")
+              r.appendChild(selectFrom((CFG.items||[]).map(function(x){return x.name;}), cd.target,
+                function(v){ cd.target=v; },null,"110px"));
+            else {
+              r.appendChild(selectFrom(statNames(), cd.target, function(v){ cd.target=v; }, statLabel,"110px"));
+              r.appendChild(inp(cd.value,"number",function(v){ cd.value=v; }));
+            }
+            r.appendChild(mkBtn("✕","del",function(){ lv.conds.splice(ci,1); renderConds(); }));
+            b.appendChild(r);
+          });
+          b.appendChild(mkBtn("+ condition","",function(){
+            lv.conds.push({kind:"stat_min",target:statNames()[1]||"__AP__",value:1}); renderConds(); }));
+        }
+        renderConds();
+        tr.appendChild(b);
+        var d=el("td");
+        d.appendChild(mkBtn("▲","",function(){ if(vi>0){ var x=line.levels[vi-1];
+          line.levels[vi-1]=line.levels[vi]; line.levels[vi]=x; render(); } }));
+        d.appendChild(mkBtn("✕","del",function(){ line.levels.splice(vi,1); render(); }));
+        tr.appendChild(d);
+        t.appendChild(tr);
+      });
+      box.appendChild(t);
+      box.appendChild(mkBtn("+ Add level","act",function(){
+        line.levels.push({label:"New title",conds:[]}); render(); }));
+      host.appendChild(box);
+    });
+  }
+  render();
+  c.appendChild(mkBtn("+ Add title line","act",function(){
+    CFG.titles.push({levels:[{label:"Junior baker",conds:[]}]}); render(); }));
+  c.appendChild(el("p","muted",
+    "Example: Line 1 = Junior baker (Baking ≥ 3) then Senior baker (Baking ≥ 10). "+
+    "Line 2 = Junior painter / Senior painter. Both show at once, on separate lines."));
 }

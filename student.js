@@ -7,8 +7,11 @@ function todayKey(){ return ptDayKey(); }
 /* ---------- storage abstraction: Firestore for members, localStorage for guests ---------- */
 var store = {
   loadStudent:function(){
-    if(GUEST){ return Promise.resolve(LS.get("student",{name:"Guest",ap:0,gameOn:true,
-      mayToggleGame:true,mayAddOwn:true,bg:"",opacity:80,todayTitle:"Today…",streak:0})); }
+    if(GUEST){ var g=LS.get("student",null);
+      if(!g) g={name:"Guest",ap:0,gameOn:true,mayToggleGame:true,mayAddOwn:true,
+        bg:"",opacity:80,todayTitle:"Today…",streak:0};
+      if(g.gameOn===undefined) g.gameOn=true;
+      return Promise.resolve(g); }
     return studentsCol.doc(ME).get().then(function(d){ return d.exists?d.data():{}; });
   },
   saveStudent:function(patch){
@@ -67,27 +70,59 @@ var store = {
 };
 
 /* ---------- boot ---------- */
+var ACCOUNT=null;   /* the signed-in firebase user, whatever their status */
+var STATUS="guest"; /* guest | student | pending | removed */
+
 auth.onAuthStateChanged(function(u){
+  ACCOUNT = u || null;
   if(u){
     resolveRole(u,function(role,data){
-      if(role==="teacher" && PREVIEW){ ME=u.uid; GUEST=true; start(); return; }
+      if(role==="teacher" && PREVIEW){ ME=u.uid; GUEST=true; STATUS="guest"; start(); return; }
       if(role==="teacher" && !VIEWAS){ location.href="teacher.html"; return; }
-      if(role==="teacher" && VIEWAS){ ME=VIEWAS; GUEST=false; start(); return; }
-      if(role==="student"){ ME=u.uid; GUEST=false; S=data||{}; touchSeen(); start(); return; }
-      location.href="index.html";
+      if(role==="teacher" && VIEWAS){ ME=VIEWAS; GUEST=false; STATUS="student"; start(); return; }
+      if(role==="parent"){ location.href="parent.html"; return; }
+      if(role==="student"){
+        ME=u.uid; GUEST=false; STATUS="student"; S=data||{};
+        /* anything left on this device from before approval comes across now */
+        var pend = LS.get("pendingMerge",null);
+        if(pend===u.uid && guestSummary().any){
+          mergeGuestIntoAccount(u.uid).then(function(r){
+            LS.del("pendingMerge");
+            MERGED = r && r.merged ? r : null;
+            touchSeen(); start();
+          }).catch(function(){ LS.del("pendingMerge"); touchSeen(); start(); });
+          return;
+        }
+        touchSeen(); start(); return;
+      }
+      /* pending or removed: keep practising on this device, with a note */
+      STATUS = (role==="removed") ? "removed" : "pending";
+      GUEST = true; ME = "guest";
+      LS.set("guest",true);
+      LS.set("pendingMerge", u.uid);
+      start();
     });
   } else {
-    if(LS.get("guest",false)){ GUEST=true; ME="guest"; start(); }
-    else location.href="index.html";
+    GUEST=true; ME="guest"; STATUS="guest";
+    LS.set("guest",true);
+    start();
   }
 });
+var MERGED=null;
 function touchSeen(){
   studentsCol.doc(ME).set({lastSeen:firebase.firestore.FieldValue.serverTimestamp(),
     lastSeenDay:todayKey()},{merge:true}).catch(function(){});
 }
 
 function start(){
-  if(PREVIEW){ setTimeout(function(){ OPEN=PREVIEW; drawPractice(); drawExercise(); }, 600); }
+  if(PREVIEW){
+    var tries=0;
+    var iv=setInterval(function(){
+      tries++;
+      if(WS[PREVIEW]){ clearInterval(iv); OPEN=PREVIEW; drawPractice(); drawExercise(); }
+      else if(tries>25) clearInterval(iv);
+    }, 250);
+  }
   siteRef.get().then(function(d){
     if(d.exists && d.data().title) $("siteTitle").textContent=d.data().title;
   }).catch(function(){});
@@ -95,17 +130,25 @@ function start(){
     .catch(function(){ TEACH={}; })
     .then(function(){ return store.loadStudent(); })
     .then(function(data){
-      S = data||{};
+      if(data && Object.keys(data).length) S = data;
+      else S = S || {};
       if(S.bg) document.body.style.background=S.bg;
       return refresh();
     });
 }
 
 function refresh(){
-  return Promise.all([ store.loadAssignments(), wsCol.get() ]).then(function(res){
+  var wsQuery = (GUEST && !PREVIEW) ? wsCol.where("publicDemo","==",true) : wsCol;
+  return Promise.all([ store.loadAssignments(), wsQuery.get() ]).then(function(res){
     var asn=res[0]; WS={};
     res[1].forEach(function(d){ WS[d.id]=Object.assign({id:d.id},d.data()); });
     if(PREVIEW && WS[PREVIEW]) asn=[{id:PREVIEW,order:0,addedBy:"teacher"}];
+    if(GUEST && !PREVIEW && !asn.length){
+      asn = Object.keys(WS).map(function(id,i){ return {id:id,order:i*10,addedBy:"teacher"}; });
+    }
+    if(GUEST && !PREVIEW && !asn.length){
+      asn = Object.keys(WS).map(function(id,i){ return {id:id, order:i*10, addedBy:"demo"}; });
+    }
     asn = asn.filter(function(a){ return WS[a.id]; });
     asn.sort(function(a,b){ return (a.order||0)-(b.order||0); });
     ASSIGN=asn;
@@ -136,21 +179,39 @@ function drawProfile(){
   head.appendChild(left);
 
   var ctr=el("div","ctrls");
-  var gb=mkBtn("Game","fun",function(){ location.href="game.html"; });
+  var gb=mkBtn("Game","fun",function(){ toggleGame(); });
   gb.disabled = !gameOn();
   ctr.appendChild(gb);
   ctr.appendChild(mkBtn("⚙ Settings","",function(){
-    var s=$("settingsCard"); if(s.classList.contains("hidden")) drawSettings();
-    s.classList.toggle("hidden"); }));
-  if(GUEST) ctr.appendChild(mkBtn("Log in","login",function(){
-    signIn().then(function(){ LS.set("guest",false); location.href="student.html"; })
-      .catch(function(e){ alert("Sign-in failed: "+e.message); }); }));
+    var sc=$("settingsCard");
+    if(sc.classList.contains("hidden")){ drawSettings(); sc.classList.remove("hidden"); }
+    else sc.classList.add("hidden");
+  }));
+  if(GUEST) ctr.appendChild(mkBtn("Log in","login",showLoginBox));
   else ctr.appendChild(mkBtn("Log out","out",function(){
-    signOutNow().then(function(){ LS.set("guest",false); location.href="index.html"; }); }));
+    signOutNow().then(function(){ LS.set("guest",true); location.href="student.html"; }); }));
   head.appendChild(ctr);
   c.appendChild(head);
 
-  if(GUEST){
+  if(MERGED){
+    var m=el("div","ok");
+    m.textContent = "Welcome in — " + MERGED.rows + " entr" + (MERGED.rows===1?"y":"ies")
+      + " moved across from this device"
+      + (MERGED.keptAccountAP ? ", and your account's ✨ was left as it was." : ".");
+    c.insertBefore(m, c.firstChild);
+  }
+  if(STATUS==="pending"){
+    var pb=el("div","banner");
+    pb.innerHTML = "<strong>Waiting for your tutor to approve your account.</strong> "
+      + "Keep practising — your work is saved on this device and will move across "
+      + "as soon as you're approved.";
+    c.insertBefore(pb, c.firstChild);
+  } else if(STATUS==="removed"){
+    var rb=el("div","banner");
+    rb.innerHTML = "<strong>This account no longer has access.</strong> "
+      + "You can still practise here; work is saved on this device only.";
+    c.insertBefore(rb, c.firstChild);
+  } else if(GUEST){
     var b=el("div","banner");
     b.innerHTML="You're practising as a guest — saved on this device only. <strong>Log in</strong> to keep it for good.";
     c.insertBefore(b, c.firstChild);
@@ -159,6 +220,69 @@ function drawProfile(){
     var v=el("div","ok"); v.textContent="Viewing as a student (teacher preview — nothing you do is saved).";
     c.insertBefore(v, c.firstChild);
   }
+}
+
+/* ---------- the log-in box ---------- */
+function showLoginBox(){
+  var g = guestSummary();
+  var note = g.any
+    ? ("<p class=\"muted\" style=\"margin:0 0 12px;\">On this device right now: "
+        + g.rows + " entr" + (g.rows===1?"y":"ies")
+        + (g.ap ? (" and ✨" + g.ap) : "") + ".</p>")
+    : "";
+  showModal(
+    "<p style=\"font-size:17px;font-weight:bold;margin:0 0 12px;\">"
+    + "<u>Log in</u> to save or load your progress!</p>" + note,
+    [
+      {label:"Log in\n& load saved data", cls:"login twoline", fn:function(){ doLogin(); }},
+      {label:"Create an account\n& save current data", cls:"login twoline", fn:function(){ doLogin(); }},
+      {label:"Stay\nlogged out", cls:"out twoline", fn:hideModal}
+    ]
+  );
+}
+function doLogin(){
+  hideModal();
+  var host=$("profileCard");
+  signIn().then(function(res){
+    /* boot re-runs on the auth change and does the merge from there */
+    LS.set("pendingMerge", res.user.uid);
+    LS.set("guest", false);
+    location.href = "student.html";
+  }).catch(function(e){
+    if(host) host.appendChild(errBox("Sign-in didn't work: " + e.message));
+  });
+}
+
+var GAME_OPEN=false;
+window.onGameClosed=function(){ GAME_OPEN=false; };
+function toggleGame(){
+  var host=$("gameHost");
+  if(GAME_OPEN){ clear(host); GAME_OPEN=false; return; }
+  GAME_OPEN=true;
+  clear(host); host.appendChild(el("p","muted","Loading the game…"));
+  if(typeof gameStart==="function") gameStart(ME, GUEST, S);
+  else host.appendChild(errBox("The game didn't load. Try refreshing."));
+}
+
+/* ---------- the game, inline ---------- */
+var gameOpen=false;
+function toggleGameBox(){
+  gameOpen=!gameOpen;
+  var host=$("gameCard");
+  clear(host);
+  if(!gameOpen) return;
+  var card=el("div","card");
+  var head=el("div","cardhead");
+  head.appendChild(el("h2",null,"Game"));
+  var ctr=el("div","ctrls");
+  ctr.appendChild(mkBtn("Close ▴","close",toggleGameBox));
+  head.appendChild(ctr); card.appendChild(head);
+  var f=document.createElement("iframe");
+  f.src="game.html?embed=1";
+  f.style.cssText="width:100%;height:700px;border:1px solid #000;margin-top:8px;background:#fff;";
+  card.appendChild(f);
+  host.appendChild(card);
+  card.scrollIntoView({behavior:"smooth",block:"start"});
 }
 
 /* ---------- practice list ---------- */
@@ -194,7 +318,7 @@ function drawPractice(){
     r.appendChild(ti);
     var cnt=counterText(w, a.archCount);
     if(cnt) r.appendChild(el("span","cnt",cnt));
-    if(gameOn() && w.ap) r.appendChild(el("span","chip","✨+"+w.ap));
+    if(gameOn()) r.appendChild(el("span","chip","✨+"+(w.ap||0)));
     r.onclick=function(){ OPEN = (OPEN===a.id? null : a.id); drawPractice(); drawExercise(); };
     c.appendChild(r);
   });
@@ -228,7 +352,7 @@ function togglePicker(mode){
   pickerMode=mode; pickerCat=null; drawPicker();
 }
 function drawPicker(){
-  var c=$("pickerCard"); clear(c); c.className="card"; c.classList.remove("hidden");
+  var c=$("pickerCard"); clear(c); c.classList.add("card"); c.classList.remove("hidden");
   c.style.background="#fafafa";
   var head=el("div","cardhead");
   head.appendChild(el("h2",null, pickerMode==="add"?"Add an activity":"Drop an activity"));
@@ -297,7 +421,7 @@ function swatches(current, fn){
   return d;
 }
 function drawSettings(){
-  var c=$("settingsCard"); clear(c); c.className="card"; c.style.background="#fafafa";
+  var c=$("settingsCard"); clear(c); c.classList.add("card"); c.style.background="#fafafa";
   var head=el("div","cardhead"); head.appendChild(el("h2",null,"⚙ Settings"));
   var ctr=el("div","ctrls");
   ctr.appendChild(mkBtn("Close ▴","close",function(){ c.classList.add("hidden"); }));
@@ -346,12 +470,13 @@ function drawSettings(){
     rn.onchange=function(){ if(rn.checked){ S.gameOn=false; drawProfile(); drawPractice(); } };
     g.appendChild(el("p","muted","Off hides ✨ points and the Game button. Your practice is unchanged — "+
       "nothing is lost, points keep counting quietly, and you can switch back any time."));
-    var sep=el("div"); sep.style.cssText="border-top:1px solid #ccc;margin-top:11px;padding-top:11px;";
+    var sep=el("div"); sep.style.cssText=
+      "border-top:1px solid #ccc;margin-top:11px;padding-top:11px;opacity:.5;";
     sep.appendChild(el("strong",null,"Play the game on its own here!"));
-    var pb=mkBtn("Play","act",function(){ alert("The standalone version isn't live yet."); });
+    var pb=mkBtn("Play (coming soon)","",null);
+    pb.disabled=true;
     pb.style.cssText="margin-left:10px;padding:6px 20px;font-weight:bold;";
     sep.appendChild(pb);
-    sep.appendChild(el("p","muted","Opens in a new tab. (coming soon)"));
     g.appendChild(sep);
     c.appendChild(g);
   }
@@ -377,38 +502,91 @@ function drawExercise(){
   var host=$("exerciseCard"); clear(host);
   if(!OPEN){ CURRENT=null; return; }
   var w=WS[OPEN];
+  if(!w){ CURRENT=null; OPEN=null; return; }
   var card=el("div","card"); host.appendChild(card);
   card.appendChild(el("p","muted","Loading…"));
 
   var a=null; ASSIGN.forEach(function(x){ if(x.id===OPEN) a=x; });
   var seedKey = OPEN+"|"+todayKey()+"|"+((a&&a.attempts)||0);
 
-  store.loadDraft(OPEN).then(function(draft){
+  var needAccum = (w.questions||[]).some(function(q){ return q.accumulate; });
+  Promise.all([ store.loadDraft(OPEN), needAccum ? store.loadArchive(OPEN) : Promise.resolve([]) ])
+  .then(function(both){
+    var draft=both[0], archRows=both[1];
+    var prior={};
+    (w.questions||[]).forEach(function(q,i){
+      if(!q.accumulate) return;
+      var col=q.accumulateFrom||q.archiveCol;
+      if(!col) return;
+      var join=(q.accumulateJoin===undefined?" ":q.accumulateJoin);
+      var parts=[];
+      archRows.slice().reverse().forEach(function(r){
+        var v=(r.cols||{})[col];
+        if(v && parts.indexOf(v)<0) parts.push(v);
+      });
+      prior[i]=parts.join(join);
+    });
     var used = draft.usedRows || {};
     var qs = w.questions||[];
     // fill tokens for each question, sharing one pick per source across the whole worksheet
+    var srcObjs=[];
+    (w.sources||[]).forEach(function(nm){
+      if(nm && typeof nm === "object"){ srcObjs.push(nm); return; }
+      (TEACH.sources||[]).forEach(function(x){ if(x.name===nm) srcObjs.push(x); });
+    });
     return fillTokens((qs.map(function(q){return q.text||"";}).join("\u0001")),
-                      w.sources||[], seedKey, used).then(function(res){
+                      srcObjs, seedKey, used).then(function(res){
       var parts = res.text.split("\u0001");
-      renderExercise(card, w, qs, parts, res, draft);
+      renderExercise(card, w, qs, parts, res, draft, prior);
     });
   }).catch(function(e){
     clear(card); card.appendChild(errBox("Could not open: "+e.message));
   });
 }
 
-function renderExercise(card, w, qs, texts, tok, draft){
+/* ---------- media slots ---------- */
+function mediaSourceFor(token){
+  var nm=String(token||"").replace(/[{}]/g,"").split(".")[0];
+  var f=null;
+  (TEACH.sources||[]).forEach(function(x){ if(x.name===nm) f=x; });
+  return f;
+}
+function mediaShowAs(token){
+  var parts=String(token||"").replace(/[{}]/g,"").split(".");
+  var src=mediaSourceFor(token), out="image";
+  if(src) (src.cols||[]).forEach(function(c){ if(c.name===parts[1] && c.showAs) out=c.showAs; });
+  return out;
+}
+/* Pull the actual link out of the values fillTokens resolved for this run. */
+function mediaValue(token, tok){
+  var key=String(token||"").replace(/[{}]/g,"");
+  var url=(tok && tok.values) ? tok.values[key] : "";
+  return { url:url||"", showAs:mediaShowAs(token) };
+}
+/* A caption may itself be a token, so resolve it the same way. */
+function fillFromValues(text, tok){
+  if(!text) return "";
+  return String(text).replace(/\{([^}]+)\}/g, function(m,inner){
+    var v=(tok && tok.values) ? tok.values[inner] : undefined;
+    return v!==undefined ? v : m;
+  });
+}
+
+function renderExercise(card, w, qs, texts, tok, draft, prior){
   clear(card);
-  CURRENT={ws:w, tok:tok, inputs:[], draft:draft};
+  CURRENT={ws:w, tok:tok, inputs:[], draft:draft, priorText:prior||{}};
   var head=el("div","cardhead");
   head.appendChild(el("h2",null,w.title||""));
   var ctr=el("div","ctrls");
   if(w.help && w.help.on!==false) ctr.appendChild(mkBtn("Help","edit",function(){ togglePanel("help"); }));
   if(w.check && w.check.on!==false) ctr.appendChild(mkBtn("Check","act",function(){ togglePanel("check"); }));
   head.appendChild(ctr); card.appendChild(head);
+  var rule=el("div"); rule.style.cssText="border-top:2px solid #000;margin-top:10px;";
+  card.appendChild(rule);
 
   qs.forEach(function(q,i){
-    var qc=el("div"); qc.style.marginTop="12px";
+    var qc=el("div");
+    qc.style.cssText="margin-top:14px;padding-top:12px;border-top:1px solid #000;";
     var lbl=el("p",null,null); lbl.style.cssText="font-weight:bold;margin:12px 0 4px;";
     lbl.innerHTML = (q.label||("Question "+(i+1)+"."))+" "+esc(texts[i]||"")
       .replace(/\u0000/g,"");
@@ -419,7 +597,24 @@ function renderExercise(card, w, qs, texts, tok, draft){
     });
     qc.appendChild(lbl);
 
-    if(q.embed){ qc.appendChild(makeFrame(q.embedLabel||"Watch this", q.embed, q.embedMode||"open")); }
+    /* the media slot: one item pulled from a media set, same row as the other tokens */
+    if(q.media){
+      var mv = mediaValue(q.media, tok);
+      if(mv.url){
+        var src = mediaSourceFor(q.media);
+        qc.appendChild(mediaNode(mv.url, mv.showAs, {
+          height: (src && src.height) || 240,
+          clickable: !src || src.clickable!==false,
+          caption: fillFromValues(q.mediaCaption, tok)
+        }));
+        var cap = fillFromValues(q.mediaCaption, tok);
+        if(cap) qc.appendChild(el("p","mediacap", cap));
+      } else {
+        qc.appendChild(el("p","muted","(The media set didn't load — try refreshing.)"));
+      }
+    }
+
+    if(q.embed){ qc.appendChild(makeFrame(q.embedLabel||"Open this", q.embed, q.embedMode||"open")); }
 
     var saved = (draft.answers||{})[i];
     if(q.type==="paired"){
@@ -472,7 +667,10 @@ function renderExercise(card, w, qs, texts, tok, draft){
       qc.appendChild(l2);
       CURRENT.inputs.push({q:q, get:function(){ return {checked:cb.checked, text:cb.checked?"yes":"no"}; }});
     } else {
-      var rb=richBox(saved?saved.html:"", q.placeholder||"");
+      var startHTML = saved ? saved.html : "";
+      if(!startHTML && q.accumulate && CURRENT.priorText && CURRENT.priorText[i])
+        startHTML = esc(CURRENT.priorText[i]);
+      var rb=richBox(startHTML, q.placeholder||"");
       rb.box.oninput=queueDraft;
       qc.appendChild(rb);
       CURRENT.inputs.push({q:q, get:function(){
@@ -549,6 +747,15 @@ function submitWork(msg){
   CURRENT.inputs.forEach(function(inp,i){
     var v=inp.get(); answers[i]=v;
     var q=inp.q;
+    /* Save which picture/PDF they were looking at, so the row still means
+       something later and the test can show it back to them. */
+    if(q.media && q.mediaCol){
+      var mv=mediaValue(q.media, tok);
+      if(mv.url){
+        baseCols[q.mediaCol]=mv.url;
+        baseCols["__showAs__"+q.mediaCol]=mv.showAs;
+      }
+    }
     if(q.type==="paired" && q.leftCol && q.rightCol){
       (v.pairs||[]).forEach(function(p){
         var row=Object.assign({},baseCols);
@@ -556,7 +763,10 @@ function submitWork(msg){
         listRows.push(row);
       });
     } else if(q.archiveCol){
-      baseCols[q.archiveCol] = v.text || "";
+      var txt = v.text || "";
+      // two questions pointing at one column append rather than clobber
+      baseCols[q.archiveCol] = baseCols[q.archiveCol]
+        ? (baseCols[q.archiveCol]+" | "+txt) : txt;
     }
   });
   var rows=[];
@@ -622,12 +832,19 @@ function toggleArchive(){
     head.appendChild(el("h2",null,"Archives — "+(w.title||"")));
     var ctr=el("div","ctrls");
     ctr.appendChild(mkBtn("⬇ CSV","",function(){ exportCSV(w,rows); }));
-    if(w.test && w.test.on && rows.length>=4)
-      ctr.appendChild(mkBtn("Test ✨","act",function(){ startTest(w,rows); }));
+    if(w.test && w.test.on){
+      if(rows.length>=4) ctr.appendChild(mkBtn("Test ✨","act",function(){ startTest(w,rows); }));
+      else { var tb=mkBtn("Test ✨",""); tb.disabled=true;
+        tb.title="Needs at least 4 archived entries to build a test."; ctr.appendChild(tb); }
+    }
     ctr.appendChild(mkBtn("Close ▴","close",function(){ archOpen=false; clear(host); }));
     head.appendChild(ctr); c.appendChild(head);
 
     if(!rows.length){ c.appendChild(el("p","muted","Nothing archived yet — submit something.")); return; }
+    if(w.test && w.test.on && rows.length<4)
+      c.appendChild(el("p","muted","Test unlocks at 4 entries — "+rows.length+" so far."));
+    if(!(w.test&&w.test.on))
+      c.appendChild(el("p","muted","No test on this worksheet (turn it on in the worksheet editor)."));
     var cols=w.archiveCols||[];
     var t=el("table"); t.style.marginTop="8px";
     var hr=document.createElement("tr");
@@ -637,7 +854,16 @@ function toggleArchive(){
     rows.slice(0,200).forEach(function(r){
       var tr=document.createElement("tr");
       tr.appendChild(el("td",null, r.ms? ptStamp(new Date(r.ms)) : ""));
-      cols.forEach(function(cn){ tr.appendChild(el("td",null,(r.cols||{})[cn]||"")); });
+      cols.forEach(function(cn){
+        var v=(r.cols||{})[cn]||"";
+        var showAs=(r.cols||{})["__showAs__"+cn];
+        if(showAs && v){
+          /* a saved media link shows as a thumbnail you can click */
+          var td=el("td","mid");
+          td.appendChild(thumbNode(v, showAs));
+          tr.appendChild(td);
+        } else tr.appendChild(el("td",null,v));
+      });
       t.appendChild(tr);
     });
     c.appendChild(t);
@@ -677,23 +903,58 @@ function startTest(w, rows){
       var p=el("p"); p.style.cssText="font-weight:bold;margin:0 0 6px;";
       p.innerHTML=(qi+1)+". "+q.prompt;
       box.appendChild(p);
-      q.options.forEach(function(opt){
-        var b=el("span"); b.style.cssText="display:block;border:1px solid #000;padding:6px 9px;margin:4px 0;background:#fff;cursor:pointer;";
-        b.textContent=opt;
-        b.onclick=function(){
-          if(box.dataset.done) return;
-          box.dataset.done="1"; answered++;
-          if(opt===q.answer){ b.style.cssText+="border-width:2px;border-color:#0a7d1b;background:#e3f0e6;";
-            b.textContent=opt+" ✓"; }
-          else { b.style.cssText+="border-width:2px;border-color:#c0261a;background:#f9e2e0;";
-            b.textContent=opt+" ✗"; wrong++;
-            Array.prototype.forEach.call(box.children,function(ch){
-              if(ch.textContent===q.answer) ch.style.cssText+="border-width:2px;border-color:#0a7d1b;background:#e3f0e6;"; });
-          }
-          if(answered===qs.length) finish();
-        };
-        box.appendChild(b);
-      });
+      if(q.media) box.appendChild(mediaNode(q.media.url, q.media.showAs, {height:200}));
+
+      function markWrong(node){
+        node.style.borderWidth="2px"; node.style.borderColor="#c0261a";
+        node.style.background="#f9e2e0";
+      }
+      function markRight(node){
+        node.style.borderWidth="2px"; node.style.borderColor="#0a7d1b";
+        node.style.background="#e3f0e6";
+      }
+      function choose(opt, node, allNodes){
+        if(box.dataset.done) return;
+        box.dataset.done="1"; answered++;
+        if(opt===q.answer) markRight(node);
+        else {
+          markWrong(node); wrong++;
+          allNodes.forEach(function(pair){ if(pair.opt===q.answer) markRight(pair.node); });
+        }
+        if(answered===qs.length) finish();
+      }
+
+      var nodes=[];
+      if(q.optionShowAs==="image"){
+        /* the archive kept the link, so the answers can be the pictures themselves */
+        var grid=el("div","mcqgrid");
+        q.options.forEach(function(opt){
+          var cell=el("div","mcqpic");
+          var im=document.createElement("img");
+          im.src=mediaUrl(opt,"image"); im.alt="";
+          im.onerror=function(){ cell.textContent="[couldn't load]"; };
+          cell.appendChild(im);
+          cell.onclick=function(){ choose(opt, cell, nodes); };
+          nodes.push({opt:opt, node:cell});
+          grid.appendChild(cell);
+        });
+        box.appendChild(grid);
+      } else {
+        q.options.forEach(function(opt){
+          var b=el("span");
+          b.style.cssText="display:block;border:1px solid #000;padding:6px 9px;margin:4px 0;background:#fff;cursor:pointer;";
+          if(q.optionShowAs){
+            var a=document.createElement("a");
+            a.href=opt; a.target="_blank"; a.rel="noopener";
+            a.textContent = q.optionShowAs==="pdf" ? "Open this PDF" : "Open this page";
+            a.onclick=function(e){ e.stopPropagation(); };
+            b.appendChild(a);
+          } else b.textContent=opt;
+          b.onclick=function(){ choose(opt, b, nodes); };
+          nodes.push({opt:opt, node:b});
+          box.appendChild(b);
+        });
+      }
       c.appendChild(box);
     });
     var footer=el("div"); footer.style.marginTop="10px"; c.appendChild(footer);
@@ -727,6 +988,8 @@ function buildTestQuestions(w, rows, n){
   var tmpl=(w.test&&w.test.wordings)||[];
   var cols=w.archiveCols||[];
   if(!tmpl.length||rows.length<3) return [];
+  // Every {Token} in a wording is an ARCHIVE COLUMN of the chosen row — including
+  // columns holding the student's own writing. The answer column is picked the same way.
   var out=[], tries=0;
   while(out.length<n && tries<n*12){
     tries++;
@@ -735,8 +998,15 @@ function buildTestQuestions(w, rows, n){
     if(!t.answerCol) continue;
     var ans=(row.cols||{})[t.answerCol];
     if(!ans) continue;
+    /* A token pointing at a saved media link becomes a picture, not text. */
+    var promptMedia=null;
     var prompt=t.text.replace(/\{([^}]+)\}/g,function(m,inner){
-      var v=(row.cols||{})[inner]; return v!==undefined? "<strong>"+esc(v)+"</strong>" : m; });
+      var v=(row.cols||{})[inner];
+      if(v===undefined) return m;
+      var sa=(row.cols||{})["__showAs__"+inner];
+      if(sa){ promptMedia={url:v, showAs:sa}; return ""; }
+      return "<strong>"+esc(v)+"</strong>";
+    });
     if(prompt.indexOf("{")>=0) continue;
     var pool=[];
     rows.forEach(function(r){
@@ -750,7 +1020,9 @@ function buildTestQuestions(w, rows, n){
       if(opts.indexOf(pick)<0) opts.push(pick);
     }
     opts.sort(function(){ return Math.random()-0.5; });
-    out.push({prompt:prompt, answer:ans, options:opts});
+    var ansShowAs=(row.cols||{})["__showAs__"+t.answerCol] || null;
+    out.push({prompt:prompt.trim(), answer:ans, options:opts,
+              media:promptMedia, optionShowAs:ansShowAs});
   }
   return out;
 }

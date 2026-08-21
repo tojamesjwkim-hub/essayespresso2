@@ -45,29 +45,46 @@ service cloud.firestore {
     }
 
     // Worksheets: approved students read all; guests read only public demos.
+    // NOTE: a guest's query must be .where('publicDemo','==',true) — the app does this.
     match /worksheets/{id} {
       allow read: if isTeacher() || isApproved() || resource.data.publicDemo == true;
       allow write: if isTeacher();
     }
 
-    // Game content: approved students only (guests get nothing).
+    // Game content is your world, not anyone's data — readable by all so that
+    // guests and not-yet-approved students can play. Only you can change it.
     match /game/config {
-      allow read: if isTeacher() || isApproved();
+      allow read: if true;
       allow write: if isTeacher();
     }
     match /game/config/screens/{id} {
-      allow read: if isTeacher() || isApproved();
+      allow read: if true;
       allow write: if isTeacher();
     }
     match /gamedrafts/{id} {
       allow read, write: if isTeacher();
     }
 
+    // A parent record lists the students they may watch. Only you can write it.
+    function watches(uid) {
+      return request.auth != null
+        && exists(/databases/$(database)/documents/parents/$(request.auth.uid))
+        && uid in get(/databases/$(database)/documents/parents/$(request.auth.uid)).data.students;
+    }
+    function parentSeesAll(uid) {
+      return watches(uid)
+        && get(/databases/$(database)/documents/parents/$(request.auth.uid)).data.scope == 'full';
+    }
+    match /parents/{uid} {
+      allow read: if isTeacher() || isMe(uid);
+      allow write: if isTeacher();
+    }
+
     match /students/{uid} {
       // A signed-in person may create their own pending record.
       allow create: if isMe(uid)
         && request.resource.data.status == 'pending';
-      allow read: if isTeacher() || isMe(uid);
+      allow read: if isTeacher() || isMe(uid) || watches(uid);
       // Students may only change these fields; status/permissions are teacher-only.
       allow update: if isTeacher()
         || (isMe(uid) && request.resource.data.diff(resource.data).affectedKeys()
@@ -77,16 +94,18 @@ service cloud.firestore {
       allow delete: if isTeacher();
 
       match /assignments/{wsId} {
-        allow read: if isTeacher() || isMe(uid);
+        allow read: if isTeacher() || isMe(uid) || watches(uid);
         allow write: if isTeacher() || isMe(uid);
       }
       match /drafts/{wsId} {
         allow read, write: if isTeacher() || isMe(uid);
       }
       match /archive/{wsId} {
-        allow read, write: if isTeacher() || isMe(uid);
+        allow read: if isTeacher() || isMe(uid) || watches(uid);
+        allow write: if isTeacher() || isMe(uid);
         match /rows/{rowId} {
-          allow read: if isTeacher() || isMe(uid);
+          // "Activity only" parents see the row count, not the answers.
+          allow read: if isTeacher() || isMe(uid) || parentSeesAll(uid);
           allow create: if isTeacher() || isMe(uid);
           allow update, delete: if isTeacher();
         }
@@ -151,6 +170,19 @@ snapshots are your undo.
 - **Game off** hides ✨ and the Game button but keeps counting quietly, so switching back
   loses nothing.
 
+## 6b. Guests and public demos
+
+A guest (nobody signed in) can only read worksheets ticked **Public demo** in the worksheet
+editor. Firestore can't filter a query per-document, so the app asks specifically for
+`publicDemo == true` when signed out. **If no worksheet is ticked as a public demo, a guest
+sees an empty board** — tick at least one.
+
+## 6b. Guest mode
+
+The landing page sends first-time visitors straight into guest practice with the game on.
+Guests can only see worksheets ticked **Public demo** in the worksheet editor — until you
+tick at least one, a guest sees an empty board. Tick one or two before sharing the link.
+
 ## 7. Known limits
 
 - ✨ is awarded by browser code, so a determined student could inflate it. `aplog` is the
@@ -159,6 +191,8 @@ snapshots are your undo.
 - Many sites (Google search, dictionary.com) refuse to be embedded and show blank in an
   iframe. Google Docs you own always work.
 - Guest work lives in one browser on one device. Clearing browser data loses it.
+- Some Google Docs/Sheets need to be shared "Anyone with the link" (or published) before
+  they'll show inside an embed.
 
 ## 8. Files
 
@@ -176,3 +210,52 @@ snapshots are your undo.
 
 When I hand you updates, the `?v=` number on every script bumps, so browsers fetch the
 new files automatically — nobody needs to clear a cache.
+
+
+---
+
+## Parents (observers)
+
+A parent is a read-only account linked to one or more students.
+
+1. **Dashboard → Parents → Invite** with their email address.
+2. They sign in with Google using **that same address**. They land on `parent.html`.
+3. Link them to students from the Parents tab, or from a student's row under Approve.
+4. Set what they see:
+   - **Activity only** — streak, entry counts, which worksheets, when. No answers, no comments.
+   - **Everything** — all of the above plus every answer and every comment you've written.
+
+Parents never see the game, ✨ balances, or anything they could change. Use **👁 View as**
+on their row to check exactly what they're looking at.
+
+> The invite record is keyed by email until they first sign in. If they use a different
+> Google address from the one you invited, they'll land on the student dashboard as a
+> pending student instead — re-invite the address they actually used.
+
+## Media sets
+
+A **word list** is a sheet of words. A **media set** is a sheet of links — one image, PDF
+or web page per row. It works the same way in every other respect, including "no repeats
+until the list runs out" and same-row pairing.
+
+**Drive folders cannot be listed by a web page**, so a media set needs a published sheet
+with one link per row. Column A the link, column B a title, and so on.
+
+1. **Dashboard → Categories & sources → + Add media set.** Paste the published CSV link.
+2. Set each column's **Show it as**: Image, PDF, Web page, A link to click, or Plain text.
+3. Press **Test**. For image sets it actually loads a sample and tells you which ones fail
+   (nearly always a file that isn't shared with "anyone with the link").
+4. In the worksheet editor, add the media set under Sources, then on a question pick a
+   **media slot** and, importantly, set **Also save the media link to** an archive column.
+
+That last step is what makes the archive worth keeping — the row records *which* item they
+were looking at, so it still means something later, and the test can show it back to them
+as picture-answers.
+
+Drive share links are rewritten automatically when displayed (`/file/d/ID/view` becomes a
+thumbnail for images, `/preview` for PDFs), so you can paste what Drive gives you.
+
+> Some sites refuse to load inside a frame — most news sites, and anything behind a login.
+> A set of 50 arbitrary websites will have a few that come up blank, and there's no way to
+> detect that from here. Embedded PDFs are also awkward on phones; if your students are
+> mostly on a phone, an image set behaves much better than a PDF set.

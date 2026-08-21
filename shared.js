@@ -67,7 +67,13 @@ function richBox(initial, placeholder){
 /* ---------- embeds ---------- */
 function toEmbedUrl(url){
   if(!url) return "";
-  var m = url.match(/docs\.google\.com\/(document|spreadsheets|presentation)\/d\/([^/]+)/);
+  if(/\/pub\?|\/pubhtml/.test(url)) return url;   // already a published link
+  var m = url.match(/docs\.google\.com\/spreadsheets\/d\/([^/]+)/);
+  if(m){
+    var gid = (url.match(/[#&?]gid=(\d+)/)||[])[1];
+    return "https://docs.google.com/spreadsheets/d/"+m[1]+"/preview"+(gid?("#gid="+gid):"");
+  }
+  m = url.match(/docs\.google\.com\/(document|presentation)\/d\/([^/]+)/);
   if(m) return "https://docs.google.com/"+m[1]+"/d/"+m[2]+"/preview";
   m = url.match(/(?:youtube\.com\/watch\?v=|youtu\.be\/)([\w-]+)/);
   if(m) return "https://www.youtube.com/embed/"+m[1];
@@ -172,6 +178,87 @@ function fillTokens(text, sources, seedKey, usedMap){
   });
 }
 
+
+/* ---------- media links ----------
+   A Drive share link shows Drive's own viewer, not the file. These rewrite
+   them into something a page can actually display.                        */
+function driveId(url){
+  var m = String(url||"").match(/drive\.google\.com\/file\/d\/([^/?#]+)/);
+  if(m) return m[1];
+  m = String(url||"").match(/drive\.google\.com\/(?:open|uc)\?(?:[^#]*&)?id=([^&#]+)/);
+  if(m) return m[1];
+  return null;
+}
+function mediaUrl(url, showAs){
+  url = String(url||"").trim();
+  if(!url) return "";
+  var id = driveId(url);
+  if(id){
+    if(showAs==="pdf" || showAs==="web")
+      return "https://drive.google.com/file/d/"+id+"/preview";
+    return "https://drive.google.com/thumbnail?id="+id+"&sz=w1000";
+  }
+  if(showAs==="web" || showAs==="pdf") return toEmbedUrl(url);
+  return url;
+}
+function looksLikeDrive(url){ return !!driveId(url); }
+
+/* Build the thing the student actually sees under a question. */
+function mediaNode(url, showAs, opts){
+  opts = opts || {};
+  var src = mediaUrl(url, showAs);
+  var wrap = el("div","media");
+  if(!src){ wrap.textContent = "[no link]"; return wrap; }
+  var h = opts.height || (showAs==="pdf" ? 420 : 240);
+
+  if(showAs==="pdf" || showAs==="web"){
+    var f=document.createElement("iframe");
+    f.src=src; f.setAttribute("loading","lazy");
+    f.style.cssText="width:100%;height:"+h+"px;border:0;display:block;background:#fff;";
+    wrap.appendChild(f);
+    wrap.classList.add("frame");
+    return wrap;
+  }
+  if(showAs==="link"){
+    var a=document.createElement("a");
+    a.href=url; a.target="_blank"; a.rel="noopener";
+    a.textContent = opts.caption || url;
+    wrap.appendChild(a);
+    return wrap;
+  }
+  /* an image */
+  var im=document.createElement("img");
+  im.src=src; im.alt=opts.caption||"";
+  im.style.cssText="max-width:100%;max-height:"+h+"px;display:block;margin:0 auto;";
+  im.onerror=function(){
+    wrap.textContent = "This image wouldn't load. " +
+      (looksLikeDrive(url) ? "Check the Drive file is shared with anyone who has the link."
+                           : "Check the link still works.");
+    wrap.className="err";
+  };
+  if(opts.clickable!==false){
+    var a2=document.createElement("a");
+    a2.href=url; a2.target="_blank"; a2.rel="noopener";
+    a2.appendChild(im); wrap.appendChild(a2);
+  } else wrap.appendChild(im);
+  return wrap;
+}
+function thumbNode(url, showAs){
+  var t=el("span","thumb");
+  var src=mediaUrl(url, showAs==="image"?"image":showAs);
+  if(showAs==="image" && src){
+    var a=document.createElement("a"); a.href=url; a.target="_blank"; a.rel="noopener";
+    var i=document.createElement("img"); i.src=src;
+    i.onerror=function(){ t.textContent="[link]"; };
+    a.appendChild(i); t.appendChild(a);
+  } else if(url){
+    var a2=document.createElement("a"); a2.href=url; a2.target="_blank"; a2.rel="noopener";
+    a2.textContent = showAs==="pdf" ? "[pdf]" : "[link]";
+    t.appendChild(a2);
+  } else t.textContent="—";
+  return t;
+}
+
 /* ---------- image helper ---------- */
 function picNode(url, alt){
   var s=el("span","pic");
@@ -199,8 +286,111 @@ function shrinkImage(file, max, cb){
 var LS = {
   get:function(k,d){ try{ var v=localStorage.getItem("ee_"+k); return v?JSON.parse(v):d; }catch(e){ return d; } },
   set:function(k,v){ try{ localStorage.setItem("ee_"+k, JSON.stringify(v)); }catch(e){} },
-  del:function(k){ try{ localStorage.removeItem("ee_"+k); }catch(e){} }
+  del:function(k){ try{ localStorage.removeItem("ee_"+k); }catch(e){} },
+  keys:function(prefix){
+    var out=[];
+    try{
+      for(var i=0;i<localStorage.length;i++){
+        var k=localStorage.key(i);
+        if(k && k.indexOf("ee_")===0){
+          var bare=k.slice(3);
+          if(!prefix || bare.indexOf(prefix)===0) out.push(bare);
+        }
+      }
+    }catch(e){}
+    return out;
+  },
+  wipe:function(){ this.keys().forEach(function(k){ LS.del(k); }); }
 };
+
+/* ---------- what's sitting on this device? ---------- */
+function guestSummary(){
+  var st = LS.get("student",{}) || {};
+  var rows = 0, sheets = 0;
+  LS.keys("arch_").forEach(function(k){
+    var a = LS.get(k,[]) || [];
+    if(a.length){ sheets++; rows += a.length; }
+  });
+  return { ap: st.ap||0, streak: st.streak||0, rows: rows, sheets: sheets,
+           assigned: (LS.get("assign",[])||[]).length,
+           game: !!LS.get("gamestate",null),
+           any: rows>0 || (st.ap||0)>0 || !!LS.get("gamestate",null) };
+}
+
+/* ---------- guest work -> the account it just signed into ----------
+   Rule: an empty account takes everything. An account that already has work
+   takes the archive rows but keeps its own ✨, so nothing is paid for twice.  */
+function mergeGuestIntoAccount(uid, opts){
+  opts = opts || {};
+  var local = guestSummary();
+  if(!local.any) return Promise.resolve({merged:false, reason:"nothing on this device"});
+
+  var sdoc = studentsCol.doc(uid);
+  return sdoc.get().then(function(d){
+    var acct = d.exists ? d.data() : {};
+    return sdoc.collection("archive").get().then(function(sn){
+      var acctHasWork = sn.size > 0 || (acct.ap||0) > 0;
+
+      var jobs = [];
+      var batch = db.batch(), writes = 0;
+
+      /* archive rows, worksheet by worksheet */
+      LS.keys("arch_").forEach(function(k){
+        var wsId = k.slice(5);
+        var rows = LS.get(k,[]) || [];
+        var col = sdoc.collection("archive").doc(wsId).collection("rows");
+        rows.forEach(function(r){
+          if(writes >= 400){ jobs.push(batch.commit()); batch = db.batch(); writes = 0; }
+          var copy = Object.assign({}, r);
+          copy.fromDevice = true;
+          batch.set(col.doc(), copy);
+          writes++;
+        });
+      });
+
+      /* drafts */
+      LS.keys("draft_").forEach(function(k){
+        var wsId = k.slice(6);
+        var d2 = LS.get(k,null);
+        if(!d2) return;
+        if(writes >= 400){ jobs.push(batch.commit()); batch = db.batch(); writes = 0; }
+        batch.set(sdoc.collection("drafts").doc(wsId), d2, {merge:true});
+        writes++;
+      });
+
+      /* self-assigned worksheets */
+      (LS.get("assign",[])||[]).forEach(function(a){
+        if(!a || !a.id) return;
+        if(writes >= 400){ jobs.push(batch.commit()); batch = db.batch(); writes = 0; }
+        var copy = Object.assign({}, a); delete copy.id;
+        batch.set(sdoc.collection("assignments").doc(a.id), copy, {merge:true});
+        writes++;
+      });
+
+      /* the profile-ish fields */
+      var patch = {};
+      var st = LS.get("student",{}) || {};
+      if(!acctHasWork){
+        if(st.ap) patch.ap = st.ap;
+        if(st.streak) patch.streak = st.streak;
+        if(st.lastPracticeDay) patch.lastPracticeDay = st.lastPracticeDay;
+      }
+      ["bg","opacity","tintProfile","tintPractice","todayTitle"].forEach(function(f){
+        if(st[f] !== undefined && acct[f] === undefined) patch[f] = st[f];
+      });
+      var g = LS.get("gamestate",null);
+      if(g && !acct.game) patch.game = g;
+      if(Object.keys(patch).length){ batch.set(sdoc, patch, {merge:true}); writes++; }
+
+      if(writes) jobs.push(batch.commit());
+      return Promise.all(jobs).then(function(){
+        if(opts.keepLocal !== true) LS.wipe();
+        return { merged:true, rows:local.rows, ap: acctHasWork ? 0 : local.ap,
+                 keptAccountAP: acctHasWork };
+      });
+    });
+  });
+}
 
 /* ---------- modal ---------- */
 function showModal(html, buttons){

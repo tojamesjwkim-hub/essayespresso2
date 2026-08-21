@@ -1,6 +1,6 @@
 /* ================= EssayEspresso — the game ================= */
 var ME=null, GUEST=false, CFG=null, SCREENS={}, G=null, S={};
-var path=[], nested=null, showMe=false, showGear=false, showEndings=false;
+var path=[], showMe=false, showGear=false, showEndings=false;
 var showConvert=false, convCat=null, convMsg="", invPick=null, endCat=null, endIdx=null;
 var qs=new URLSearchParams(location.search), DRAFT=qs.get("draft"), TESTMODE=!!DRAFT;
 
@@ -20,20 +20,29 @@ var gstore={
   }
 };
 
-auth.onAuthStateChanged(function(u){
-  if(u){
-    resolveRole(u,function(role,data){
-      if(role==="student"){ ME=u.uid; S=data||{};
-        if(S.gameOn===false && !TESTMODE){ location.href="student.html"; return; }
-        boot(); return; }
-      if(role==="teacher"){ ME=u.uid; S={name:"Jim",ap:99999}; GUEST=false; boot(); return; }
-      location.href="index.html";
-    });
-  } else {
-    if(LS.get("guest",false)){ GUEST=true; ME="guest"; S=LS.get("student",{ap:0}); boot(); }
-    else location.href="index.html";
-  }
-});
+var EMBEDDED = !!document.getElementById("gameHost") && !document.getElementById("host");
+
+/* When embedded in the student page, student.js calls gameStart() instead. */
+function gameStart(uid, guest, studentDoc){
+  ME=uid; GUEST=guest; S=studentDoc||{};
+  boot();
+}
+if(!EMBEDDED){
+  auth.onAuthStateChanged(function(u){
+    if(u){
+      resolveRole(u,function(role,data){
+        if(role==="student"){ ME=u.uid; S=data||{};
+          if(S.gameOn===false && !TESTMODE){ location.href="student.html"; return; }
+          boot(); return; }
+        if(role==="teacher"){ ME=u.uid; S={name:"Jim",ap:99999}; GUEST=false; boot(); return; }
+        location.href="index.html";
+      });
+    } else {
+      if(LS.get("guest",false)){ GUEST=true; ME="guest"; S=LS.get("student",{ap:0}); boot(); }
+      else location.href="index.html";
+    }
+  });
+}
 
 function boot(){
   var cfgP = DRAFT ? draftsCol.doc(DRAFT).get().then(function(d){
@@ -58,7 +67,8 @@ function boot(){
     rolloverCheck();
     draw();
   }).catch(function(e){
-    $("host").appendChild(errBox("Could not load the game: "+e.message+
+    var h=gameHostNode();
+    if(h) h.appendChild(errBox("Could not load the game: "+e.message+
       " — your tutor may not have built it yet."));
   });
 }
@@ -70,13 +80,18 @@ function freshGame(keep){
   });
   return { day:1, stats:st, inv:(keep&&keep.inv)||{}, found:(keep&&keep.found)||{},
     name:(keep&&keep.name)||"Me", pic:(keep&&keep.pic)||"", bg:(keep&&keep.bg)||"",
-    over:false, dayKey:ptDayKey(), once:{} };
+    over:false, dayKey:ptDayKey(), once:{}, flags:(keep&&keep.flags)||{},
+    seed:newSeed(), shares:{}, bank:{}, prices:{} };
 }
 function rolloverCheck(){
   var k=ptDayKey();
   if(G.dayKey !== k){
     var gap = daysBetweenKeys(G.dayKey, k);
-    if(gap>0 && !G.over){ G.day = Math.min(CFG.days, (G.day||1) + gap); }
+    if(gap>0 && !G.over){
+      var moved = Math.min(CFG.days, (G.day||1) + gap) - (G.day||1);
+      G.day = Math.min(CFG.days, (G.day||1) + gap);
+      if(moved>0) applyInterest(moved);
+    }
     G.dayKey = k;
     if(G.day>=CFG.days) { /* stays playable; ending triggers via the button */ }
     gstore.save();
@@ -84,6 +99,18 @@ function rolloverCheck(){
 }
 
 /* ---------- helpers ---------- */
+/* Every run gets its own seed, so two students on the same day see different
+   luck, and restarting gives a fresh world. Fixed within a day: reloading
+   never rerolls anything. */
+function newSeed(){
+  function blk(){ return Math.random().toString(36).slice(2,6); }
+  return blk()+"-"+blk();
+}
+function runSeed(){
+  if(!G.seed){ G.seed = newSeed(); }
+  return G.seed;
+}
+function gameRand(key){ return rand01(runSeed()+"|"+key); }
 function statVal(n){ return (G.stats[n]||0); }
 function apVal(){ return S.ap||0; }
 function statEmoji(n){
@@ -91,11 +118,13 @@ function statEmoji(n){
   return (f&&f.emoji)||n;
 }
 function fmtFx(f){
-  if(f.kind==="item") return "("+(f.amount>0?"Get":"Lose")+": "+f.target+")";
+  var n=Math.abs(Number(f.amount)||0);
+  if(f.kind==="item") return "("+(f.dir==="take"?"Lose":"Get")+": "+f.target+
+    (n>1?(" ×"+n):"")+")";
   var nm = f.target==="__AP__" ? "✨" : statEmoji(f.target);
-  if(f.op==="x") return "("+nm+"×"+f.amount+")";
-  if(f.op==="=") return "("+nm+"="+f.amount+")";
-  return "("+nm+(f.amount>=0?"+":"")+f.amount+")";
+  if(f.op==="x") return "("+nm+"×"+n+")";
+  if(f.op==="=") return "("+nm+"="+n+")";
+  return "("+nm+(f.dir==="take"?"−":"+")+n+")";
 }
 function condOK(c){
   if(!c || !c.kind) return true;
@@ -106,8 +135,24 @@ function condOK(c){
   if(c.kind==="day_min")  return G.day >= (c.value||0);
   return true;
 }
+function affordable(b){
+  var need={};
+  (b.fx||[]).forEach(function(f){
+    if(f.dir!=="take") return;
+    var n=Math.abs(Number(f.amount)||0);
+    if(f.kind==="item"){ need["item:"+f.target]=(need["item:"+f.target]||0)+n; }
+    else need["stat:"+f.target]=(need["stat:"+f.target]||0)+n;
+  });
+  return Object.keys(need).every(function(k){
+    var amount=need[k];
+    if(k.indexOf("item:")===0) return (G.inv[k.slice(5)]||0) >= amount;
+    var t=k.slice(5);
+    return (t==="__AP__" ? apVal() : statVal(t)) >= amount;
+  });
+}
 function buttonEligible(b){
   if((b.conds||[]).some(function(c){ return !condOK(c); })) return false;
+  if(!affordable(b)) return false;
   if(b.limit==="once" && G.once[b.id]) return false;
   if(b.limit==="daily" && G.once[b.id]===G.dayKey) return false;
   return true;
@@ -120,34 +165,115 @@ function visibleButtons(screenId){
   pool.forEach(function(b){
     var ch = (b.chance===undefined||b.chance===null) ? 100 : b.chance;
     if(ch>=100){ picked.push(b); return; }
-    if(rand01(G.dayKey+"|"+screenId+"|"+b.id)*100 < ch) picked.push(b);
+    if(gameRand(G.dayKey+"|"+screenId+"|"+b.id)*100 < ch) picked.push(b);
   });
   return {list:picked, perPage:perPage, hideEmpty:sc.hideEmpty};
+}
+function fxDelta(f){
+  // give/take always carry a positive amount; direction comes from the kind
+  var n = Math.abs(Number(f.amount)||0);
+  return (f.dir==="take") ? -n : n;
 }
 function applyFx(b){
   (b.fx||[]).forEach(function(f){
     if(f.kind==="item"){
       var cur=G.inv[f.target]||0;
-      if(f.amount>0){
+      var amt=fxDelta(f);
+      if(amt>0){
         var slots=(CFG.invPages||10)*9;
         if(Object.keys(G.inv).length>=slots && !cur){ convMsg="Your bag is full."; return; }
       }
-      G.inv[f.target]=cur+f.amount;
+      G.inv[f.target]=cur+amt;
       if(G.inv[f.target]<=0) delete G.inv[f.target];
       return;
     }
-    if(f.target==="__AP__"){ S.ap=Math.max(0,(S.ap||0)+f.amount); gstore.saveStudentAP(); return; }
+    var d=fxDelta(f);
+    if(f.target==="__AP__"){
+      if(f.op==="x") S.ap=Math.floor((S.ap||0)*Math.abs(f.amount||1));
+      else if(f.op==="=") S.ap=Math.abs(f.amount||0);
+      else S.ap=Math.max(0,(S.ap||0)+d);
+      gstore.saveStudentAP(); return;
+    }
     var v=statVal(f.target);
-    if(f.op==="x") v=Math.floor(v*f.amount);
-    else if(f.op==="/") v=Math.max(0,Math.floor(v/(f.amount||1)));
-    else if(f.op==="=") v=f.amount;
-    else v=v+f.amount;
+    if(f.op==="x") v=Math.floor(v*Math.abs(f.amount||1));
+    else if(f.op==="/") v=Math.max(0,Math.floor(v/(Math.abs(f.amount)||1)));
+    else if(f.op==="=") v=Math.abs(f.amount||0);
+    else v=v+d;
     var max=null; (CFG.stats||[]).forEach(function(s){ if(s.name===f.target && s.max!=null) max=s.max; });
     if(max!=null) v=Math.min(max,v);
     G.stats[f.target]=Math.max(0,v);
   });
   if(b.limit==="once") G.once[b.id]=true;
   if(b.limit==="daily") G.once[b.id]=G.dayKey;
+  if(b.setsFlag){ G.flags=G.flags||{}; G.flags[b.setsFlag]=true; }
+}
+
+/* ---------- shared bits of screen furniture ---------- */
+function backButton(){
+  var b=mkBtn("← Back","backbtn");
+  b.className="backbtn";
+  b.onclick=goBack;
+  return b;
+}
+/* The framed centre slot: "who you are" at the top, "where you are" deeper in.
+   The frame travels with the player. */
+function centreColumn(sc){
+  var wrapc=el("div"); wrapc.className="mid";
+  if(path.length){
+    wrapc.appendChild(ibNode("big here", sc.pic, sc.label||"", "", null));
+    if(titleLines().length) wrapc.appendChild(titleBox());
+    wrapc.appendChild(backButton());
+  } else {
+    var me=ibNode("big here", G.pic||sc.pic, G.name||"Me", "", toggleMe);
+    me.classList.remove("here");        /* the character is clickable */
+    me.classList.add("here");
+    me.style.cursor="pointer";
+    me.disabled=false;
+    me.onclick=toggleMe;
+    wrapc.appendChild(me);
+    if(titleLines().length) wrapc.appendChild(titleBox());
+  }
+  return wrapc;
+}
+function titleBox(){
+  var tb=el("div","titlebox");
+  titleLines().forEach(function(t){ tb.appendChild(el("div","t",t)); });
+  return tb;
+}
+/* Narrative text sits under the centre column, not flush left. */
+function addNarrative(card, html){
+  if(!html) return;
+  var n=el("div","narr");
+  n.innerHTML=html;
+  card.appendChild(n);
+}
+function goldName(){
+  var g=null;
+  (CFG.stats||[]).forEach(function(s){ if(s.emoji==="🪙") g=s.name; });
+  return g || "Gold";
+}
+function coin(n){ return "🪙"+n; }
+function bold(n){ var b=el("strong",null,String(n)); return b; }
+function tdHTML(html,cls){ var t=el("td",cls||"mid"); t.innerHTML=html; return t; }
+function thTxt(txt,cls){ var t=el("th",cls||null,txt); return t; }
+function qtyRow(maxFn, allLabel, goLabel, goFn){
+  var wrap=el("div","qty");
+  var inp=document.createElement("input");
+  inp.type="number"; inp.min="1"; inp.value="1";
+  wrap.appendChild(inp);
+  if(allLabel){
+    var mx=maxFn();
+    var a=mkBtn(allLabel+" ("+mx+")","go",function(){ inp.value=String(Math.max(1,mx)); });
+    if(mx<1) a.disabled=true;
+    wrap.appendChild(a);
+  }
+  var go=mkBtn(goLabel,"act",function(){
+    var n=Math.floor(Number(inp.value)||0);
+    if(n>0) goFn(n);
+  });
+  go.style.fontWeight="bold";
+  wrap.appendChild(go);
+  return wrap;
 }
 
 /* ---------- rendering ---------- */
@@ -177,11 +303,15 @@ function header(){
   });
   var bag=el("span","hdrbtn bag","🎒"); bag.onclick=function(){ toggleMe(); };
   ctr.appendChild(bag);
+  if(EMBEDDED) ctr.appendChild(mkBtn("Close ▴","close",function(){
+    clear($("gameHost")); if(window.onGameClosed) window.onGameClosed(); }));
   head.appendChild(ctr);
   return head;
 }
+function gameHostNode(){ return $("host") || $("gameHost"); }
 function draw(){
-  var host=$("host"); clear(host);
+  var host=gameHostNode(); if(!host) return;
+  clear(host);
   if(TESTMODE){ var t=el("div","ok"); t.textContent="Play-testing a draft — nothing here touches real saves.";
     host.appendChild(t); }
   if(G.over){ host.appendChild(drawEnding()); }
@@ -200,9 +330,15 @@ function drawScreen(){
     if(path.length) card.appendChild(mkBtn("← Back","",goBack));
     return card; }
 
+  if(sc.type===3) return drawCounter(card, sc, cur);
+  if(sc.type===4) return drawMarket(card, sc, cur);
+
   if(sc.type===2){
     var wrap=el("div","p2"); wrap.style.marginTop="10px";
-    wrap.appendChild(ibNode("back", sc.pic, "← Back", "", path.length?goBack:null));
+    var lefty=el("div");
+    lefty.appendChild(ibNode("big here", sc.pic, sc.label||"", "", null));
+    if(path.length) lefty.appendChild(backButton());
+    wrap.appendChild(lefty);
     var content=el("div","content");
     var txt=el("div","txt"); txt.innerHTML=sc.text||""; content.appendChild(txt);
     var imgs=el("div","imgs"); var rowd=el("div","imgrow");
@@ -214,6 +350,7 @@ function drawScreen(){
     });
     imgs.appendChild(rowd); content.appendChild(imgs);
     wrap.appendChild(content); card.appendChild(wrap);
+    addNarrative(card, sc.footText);
     return card;
   }
 
@@ -222,12 +359,13 @@ function drawScreen(){
   var per = vis.perPage||4;
   var slice = vis.list.slice(page*per, page*per+per);
   var grid=el("div","grid"); grid.style.marginTop="10px";
-  var centre = path.length
-    ? ibNode("big mid back", sc.pic, "← Back", "", goBack)
-    : ibNode("big mid", G.pic||sc.pic, G.name||"Me", "", toggleMe);
+  var centre = centreColumn(sc);
   function slotAt(i){
     var b=slice[i];
-    if(!b) return ibNode("locked","", "???", "", null);
+    if(!b){
+      if(sc.hideEmpty){ var ph=el("div"); return ph; }   // truly invisible
+      return ibNode("locked","", "???", "", null);
+    }
     var eff=(b.fx||[]).map(fmtFx).join(" ");
     return ibNode("", b.pic, b.label, eff, function(){ pressButton(cur,b); });
   }
@@ -259,24 +397,466 @@ function drawScreen(){
     foot.appendChild(b2);
     card.appendChild(foot);
   }
+  addNarrative(card, sc.footText);
   if(convMsg){ card.appendChild(el("p",null,convMsg)).style.cssText=
     "margin-top:10px;font-weight:bold;text-align:center;"; convMsg=""; }
   return card;
 }
+/* ================= prices: the four tracks ================= */
+var TRACKS=["increase","decrease","stable","wild"];
+var PRICE_CACHE={};
+function stockDefs(){ return (CFG.stocks||[]); }
+function stockByTicker(t){
+  var f=null; stockDefs().forEach(function(s){ if(s.ticker===t) f=s; });
+  return f;
+}
+function clampPrice(v, lo, hi){
+  v=Math.round(v);
+  if(v<lo) v=lo;
+  if(v>hi) v=hi;
+  return Math.max(1,v);
+}
+function stepPrice(p, track, lo, hi, r){
+  var span=Math.max(1,hi-lo);
+  if(track==="increase") return p + (r*(hi-p)*0.45) + 1;
+  if(track==="decrease") return p - (r*(p-lo)*0.45) - 1;
+  if(track==="wild")     return lo + r*span;
+  return p + (r-0.5)*span*0.18;                     /* stable */
+}
+/* The whole price history for one stock, day 1 to today, from the run seed. */
+function priceSeries(st){
+  var key = runSeed()+"|"+st.ticker+"|"+(G.day||1);
+  if(PRICE_CACHE[key]) return PRICE_CACHE[key];
+  var lo=Math.max(1, Number(st.low)||1), hi=Math.max(lo+1, Number(st.high)||20);
+  var track = st.startTrack && st.startTrack!=="random" ? st.startTrack
+            : TRACKS[Math.floor(gameRand(st.ticker+"|track0")*TRACKS.length)];
+  var p = (st.start!==undefined && st.start!=="" && st.start!==null)
+        ? Number(st.start) : lo + gameRand(st.ticker+"|p0")*(hi-lo);
+  var out=[];
+  var switchPct = Number(st.switchPct);
+  if(isNaN(switchPct)) switchPct = 25;
+  for(var d=1; d<=(G.day||1); d++){
+    out.push(clampPrice(p, lo, hi));
+    if(gameRand(st.ticker+"|sw|"+d)*100 < switchPct){
+      track = TRACKS[Math.floor(gameRand(st.ticker+"|nt|"+d)*TRACKS.length)];
+    }
+    p = stepPrice(out[out.length-1], track, lo, hi, gameRand(st.ticker+"|mv|"+d));
+  }
+  PRICE_CACHE[key]=out;
+  return out;
+}
+function priceToday(st){ var s=priceSeries(st); return s[s.length-1]; }
+function priceYesterday(st){ var s=priceSeries(st); return s.length>1?s[s.length-2]:s[0]; }
+
+/* ================= holdings ================= */
+function holding(t){
+  G.shares = G.shares || {};
+  return G.shares[t] || {n:0, spent:0};
+}
+function goldHeld(){ return statVal(goldName()); }
+function addGold(n){
+  var g=goldName();
+  var max=null; (CFG.stats||[]).forEach(function(s){ if(s.name===g && s.max!=null) max=s.max; });
+  var v=Math.max(0, goldHeld()+n);
+  if(max!=null) v=Math.min(max,v);
+  G.stats[g]=v;
+}
+
+/* ================= page type 3 — counter (bank / store) ================= */
+var counterView=null;   /* null | deposit | withdraw | buy | sell */
+
+function bankBalance(id){ G.bank=G.bank||{}; return G.bank[id]||0; }
+function setBank(id,v){ G.bank=G.bank||{}; G.bank[id]=Math.max(0,Math.round(v)); }
+
+function drawCounter(card, sc, cur){
+  var mode = sc.counterMode==="store" ? "store" : "bank";
+  if(counterView){
+    card.appendChild(mode==="store" ? storeBox(sc,cur) : bankBox(sc,cur));
+    return card;
+  }
+  var grid=el("div","grid"); grid.style.marginTop="10px";
+  var leftLbl  = mode==="store" ? "Buy"  : "Deposit";
+  var rightLbl = mode==="store" ? "Sell" : "Withdraw";
+  var leftPic  = mode==="store" ? sc.buyPic  : sc.depositPic;
+  var rightPic = mode==="store" ? sc.sellPic : sc.withdrawPic;
+  var leftView = mode==="store" ? "buy" : "deposit";
+  var rightView= mode==="store" ? "sell" : "withdraw";
+
+  grid.appendChild(ibNode("", leftPic, leftLbl, "", function(){ counterView=leftView; draw(); }));
+  grid.appendChild(centreColumn(sc));
+  var canSell = mode!=="store" || sc.allowSell!==false;
+  grid.appendChild(canSell
+    ? ibNode("", rightPic, rightLbl, "", function(){ counterView=rightView; draw(); })
+    : el("div"));
+  grid.appendChild(el("div")); grid.appendChild(el("div"));
+  card.appendChild(grid);
+
+  var note = sc.footText;
+  if(!note && mode==="bank"){
+    var pct=Number(sc.interest)||0;
+    note = "<strong>You have "+coin(bankBalance(cur))+" in the bank.</strong>"
+         + (pct ? (" Growing "+pct+"% a day.") : "");
+  }
+  addNarrative(card, note);
+  return card;
+}
+
+function boxHead(title, card){
+  var h=el("div","cardhead");
+  h.appendChild(el("h2",null,title));
+  var c=el("div","ctrls");
+  c.appendChild(el("span","hdrbtn", coin(goldHeld())));
+  c.appendChild(mkBtn("Close ▴","close",function(){ counterView=null; draw(); }));
+  h.appendChild(c);
+  card.appendChild(h);
+}
+
+function bankBox(sc,cur){
+  var box=el("div"); box.style.cssText="border:1px solid #000;background:#eef3fb;padding:12px;margin-top:10px;";
+  var depositing = counterView==="deposit";
+  boxHead(depositing?"Deposit":"Withdraw", box);
+  var bal=bankBalance(cur);
+  var cap=Number(sc.maxBalance)||0;
+  var line=el("p"); line.style.margin="8px 0";
+  line.innerHTML="You have <strong>"+coin(bal)+"</strong> in the bank.";
+  box.appendChild(line);
+
+  var maxFn = depositing
+    ? function(){ var m=goldHeld(); if(cap) m=Math.min(m, Math.max(0,cap-bal)); return m; }
+    : function(){ return bal; };
+
+  box.appendChild(qtyRow(maxFn, null, depositing?"Deposit":"Withdraw", function(n){
+    var lim=maxFn();
+    if(n>lim){ convMsg = depositing
+      ? (cap && bal+n>cap ? "The bank won't hold more than "+coin(cap)+"." : "You don't have that much gold.")
+      : "There isn't that much in the bank.";
+      draw(); return; }
+    if(depositing){ addGold(-n); setBank(cur, bal+n); }
+    else { addGold(n); setBank(cur, bal-n); }
+    counterView=null; draw();
+  }));
+  if(cap) box.appendChild(el("p","muted","The bank holds at most "+coin(cap)+"."));
+  return box;
+}
+
+function sellPriceOf(it, sc){
+  if(it.sell!==undefined && it.sell!==null && it.sell!=="") return Math.max(0,Math.round(Number(it.sell)));
+  var pct = Number(sc && sc.defaultSellPct);
+  if(isNaN(pct)) pct = 50;
+  if(it.buy===undefined || it.buy===null || it.buy==="") return null;
+  return Math.max(0, Math.round(Number(it.buy)*pct/100));
+}
+function storeStock(sc){
+  var all=(CFG.items||[]).filter(function(i){
+    return i.buy!==undefined && i.buy!==null && i.buy!=="";
+  });
+  if(sc.stockList && sc.stockList.length){
+    all = all.filter(function(i){ return sc.stockList.indexOf(i.name)>=0; });
+  }
+  return all;
+}
+function storeBox(sc,cur){
+  var buying = counterView==="buy";
+  var box=el("div"); box.style.cssText="border:1px solid #000;background:#eef3fb;padding:12px;margin-top:10px;";
+  boxHead(buying?"Buy":"Sell", box);
+  var t=el("table"); t.style.marginTop="8px";
+  var hr=document.createElement("tr");
+  hr.appendChild(thTxt("Item"));
+  hr.appendChild(thTxt(buying?"Price":"Sells for","gR"));
+  hr.appendChild(thTxt("You have…","ctr gR"));
+  hr.appendChild(thTxt(buying?"Buy how many?":"Sell how many?"));
+  t.appendChild(hr);
+
+  var list = buying ? storeStock(sc)
+                    : (CFG.items||[]).filter(function(i){ return (G.inv[i.name]||0)>0; });
+  if(!list.length){
+    box.appendChild(t);
+    box.appendChild(el("p","muted", buying?"Nothing for sale here.":"You have nothing to sell."));
+    return box;
+  }
+  list.forEach(function(it){
+    var have=G.inv[it.name]||0;
+    var price = buying ? Math.max(0,Math.round(Number(it.buy)||0)) : sellPriceOf(it, sc);
+    var tr=document.createElement("tr");
+    tr.appendChild(tdHTML("<strong>"+esc(it.name)+"</strong>"));
+    if(price===null){
+      tr.appendChild(tdHTML("<span class='muted'>not sellable</span>","mid gR"));
+      tr.appendChild(tdHTML("<strong>"+have+"</strong>","ctr mid gR"));
+      tr.appendChild(tdHTML("<span class='muted'>—</span>"));
+      tr.style.opacity=".55";
+      t.appendChild(tr); return;
+    }
+    tr.appendChild(tdHTML(coin("<strong>"+price+"</strong>")+" each","mid gR"));
+    tr.appendChild(tdHTML("<strong>"+have+"</strong>","ctr mid gR"));
+    var cell=el("td","mid");
+    var maxFn = buying
+      ? function(){ return price>0 ? Math.floor(goldHeld()/price) : 0; }
+      : function(){ return have; };
+    cell.appendChild(qtyRow(
+      buying ? null : maxFn,
+      buying ? null : "All",
+      (buying?"Buy for ":"Sell for ")+coin(price),
+      function(n){
+        if(buying){
+          if(n*price > goldHeld()){ convMsg="You can't afford that many."; draw(); return; }
+          var slots=(CFG.invPages||10)*9;
+          if(!have && Object.keys(G.inv).length>=slots){ convMsg="Your bag is full."; draw(); return; }
+          addGold(-n*price); G.inv[it.name]=have+n;
+        } else {
+          if(n>have){ convMsg="You don't have that many."; draw(); return; }
+          addGold(n*price); G.inv[it.name]=have-n;
+          if(G.inv[it.name]<=0) delete G.inv[it.name];
+        }
+        counterView=null; draw();
+      }));
+    tr.appendChild(cell);
+    t.appendChild(tr);
+  });
+  box.appendChild(t);
+  return box;
+}
+
+/* ================= page type 4 — market (stocks) ================= */
+var marketView=null;      /* null | buy | sell */
+var showDetails=false, chartTicker=null, chartAll=false;
+
+function drawMarket(card, sc, cur){
+  if(marketView){ card.appendChild(marketBox(sc,cur)); return card; }
+
+  var two=el("div","p2"); two.style.marginTop="10px";
+  var lefty=el("div");
+  lefty.appendChild(ibNode("big here", sc.pic, sc.label||"", "", null));
+  if(path.length) lefty.appendChild(backButton());
+  two.appendChild(lefty);
+
+  var righty=el("div");
+  var pair=el("div");
+  pair.style.cssText="display:grid;grid-template-columns:1fr 1fr;gap:8px;";
+  pair.appendChild(ibNode("", sc.buyPic, "Buy", "", function(){ marketView="buy"; draw(); }));
+  pair.appendChild(ibNode("", sc.sellPic, "Sell", "", function(){ marketView="sell"; draw(); }));
+  righty.appendChild(pair);
+
+  var det=mkBtn(showDetails?"Hide details":"See details","detbtn");
+  det.className = showDetails ? "detbtn on" : "detbtn";
+  det.onclick=function(){ showDetails=!showDetails; draw(); };
+  righty.appendChild(det);
+  two.appendChild(righty);
+  card.appendChild(two);
+
+  if(showDetails){
+    card.appendChild(marketTable(sc));
+    card.appendChild(marketChart());
+  }
+  addNarrative(card, sc.footText);
+  return card;
+}
+
+function marketTable(sc){
+  var t=el("table"); t.style.marginTop="14px";
+  var hr=document.createElement("tr");
+  hr.appendChild(thTxt("Stock"));
+  hr.appendChild(thTxt("Description"));
+  hr.appendChild(thTxt("Today's price","gR"));
+  hr.appendChild(thTxt("You have…","ctr"));
+  hr.appendChild(thTxt("You spent…"));
+  hr.appendChild(thTxt("Today, they're…","gR"));
+  hr.appendChild(thTxt("Buy or sell:"));
+  t.appendChild(hr);
+
+  stockDefs().forEach(function(st){
+    var p=priceToday(st), h=holding(st.ticker);
+    var tr=document.createElement("tr");
+    if(chartTicker===st.ticker) tr.style.background="#fdf3cf";
+    tr.style.cursor="pointer";
+    tr.onclick=function(){ chartTicker=st.ticker; draw(); };
+
+    var c=esc(st.color||"#000");
+    tr.appendChild(tdHTML("<span class='tick' style='color:"+c+"'>"+esc(st.ticker)+"</span>"));
+    tr.appendChild(tdHTML("<span style='color:"+c+";font-weight:bold'>"+esc(st.desc||"")+"</span>"));
+    tr.appendChild(tdHTML(coin("<strong>"+p+"</strong>")+" each","mid gR"));
+    tr.appendChild(tdHTML(h.n ? ("<strong>"+h.n+"</strong> shares") : "<span class='muted'>—</span>","ctr mid"));
+    if(h.n){
+      var per=Math.round(h.spent/h.n);
+      tr.appendChild(tdHTML(coin("<strong>"+h.spent+"</strong>")+" total <span class='muted'>("
+        +coin("<strong>"+per+"</strong>")+" each)</span>"));
+      var worth=h.n*p, diff=worth-h.spent;
+      var arrow = diff>0 ? "<span class='up'>▲+"+diff+"</span>"
+                : diff<0 ? "<span class='down'>▼"+diff+"</span>"
+                : "<span class='muted'>—</span>";
+      tr.appendChild(tdHTML(coin("<strong>"+worth+"</strong>")+" "+arrow
+        +" <span class='muted'>("+coin("<strong>"+p+"</strong>")+" each)</span>","mid gR"));
+    } else {
+      tr.appendChild(tdHTML("<span class='muted'>—</span>"));
+      tr.appendChild(tdHTML("<span class='muted'>—</span>","mid gR"));
+    }
+    var act=el("td","mid");
+    var bb=mkBtn("Buy","act",function(e){ e.stopPropagation(); marketView="buy"; chartTicker=st.ticker; draw(); });
+    bb.style.fontWeight="bold"; act.appendChild(bb);
+    var sb=mkBtn("Sell","del",function(e){ e.stopPropagation(); marketView="sell"; chartTicker=st.ticker; draw(); });
+    sb.style.fontWeight="bold";
+    if(!h.n) sb.disabled=true;
+    act.appendChild(sb);
+    tr.appendChild(act);
+    t.appendChild(tr);
+  });
+  return t;
+}
+
+function marketChart(){
+  var defs=stockDefs();
+  if(!defs.length) return el("div");
+  var st = stockByTicker(chartTicker) || defs[0];
+  chartTicker = st.ticker;
+  var series = priceSeries(st);
+  var days = chartAll ? series.length : Math.min(10, series.length);
+  var slice = series.slice(series.length-days);
+  var startDay = (G.day||1) - days + 1;
+  var lo=Math.max(1,Number(st.low)||1), hi=Math.max(lo+1,Number(st.high)||20);
+
+  var w=el("div","chartwrap");
+  var h=el("div","cardhead"); h.style.marginBottom="8px";
+  var lbl=el("span");
+  lbl.innerHTML="<span class='tick' style='color:"+esc(st.color||"#000")+"'>"+esc(st.ticker)
+    +"</span> <span style='color:"+esc(st.color||"#000")+";font-weight:bold'>"+esc(st.desc||"")+"</span>";
+  h.appendChild(lbl);
+  var ctr=el("div","ctrls");
+  var b10=mkBtn("Last 10 days", chartAll?"":"act", function(){ chartAll=false; draw(); });
+  var ball=mkBtn("All days", chartAll?"act":"", function(){ chartAll=true; draw(); });
+  if(!chartAll) b10.style.fontWeight="bold"; else ball.style.fontWeight="bold";
+  ctr.appendChild(b10); ctr.appendChild(ball);
+  h.appendChild(ctr); w.appendChild(h);
+
+  w.appendChild(el("div","ylab","🪙 per share"));
+  var plot=el("div","plot");
+  var ax=el("div","yaxis");
+  [hi, Math.round(hi*0.75), Math.round(hi*0.5), Math.round(hi*0.25), 0].forEach(function(v){
+    ax.appendChild(el("div",null,String(v)));
+  });
+  plot.appendChild(ax);
+  var bars=el("div","bars");
+  slice.forEach(function(v,i){
+    var col=el("div","bcol");
+    var b=el("div","bar");
+    b.style.height = Math.max(1, Math.round(v/hi*100)) + "%";
+    b.style.background = st.color||"#666";
+    if(i < slice.length-1) b.style.opacity=".35";
+    b.title = "Day "+(startDay+i)+" — "+coin(v);
+    col.appendChild(b);
+    bars.appendChild(col);
+  });
+  plot.appendChild(bars);
+  w.appendChild(plot);
+  var xa=el("div","xaxis");
+  slice.forEach(function(_,i){ xa.appendChild(el("div",null,"Day "+(startDay+i))); });
+  w.appendChild(xa);
+  return w;
+}
+
+function marketBox(sc,cur){
+  var buying = marketView==="buy";
+  var box=el("div"); box.style.cssText="border:1px solid #000;background:#eef3fb;padding:12px;margin-top:10px;";
+  var h=el("div","cardhead");
+  h.appendChild(el("h2",null, buying?"Buy":"Sell"));
+  var c=el("div","ctrls");
+  c.appendChild(el("span","hdrbtn", coin(goldHeld())));
+  c.appendChild(mkBtn("Close ▴","close",function(){ marketView=null; draw(); }));
+  h.appendChild(c); box.appendChild(h);
+
+  var t=el("table"); t.style.marginTop="8px";
+  var hr=document.createElement("tr");
+  hr.appendChild(thTxt("Stock"));
+  hr.appendChild(thTxt("Description"));
+  hr.appendChild(thTxt("Today's price","gR"));
+  hr.appendChild(thTxt("You have…","ctr"));
+  hr.appendChild(thTxt("You spent…","gR"));
+  hr.appendChild(thTxt(buying?"Buy how many?":"Sell how many?"));
+  t.appendChild(hr);
+
+  var any=false;
+  stockDefs().forEach(function(st){
+    var p=priceToday(st), hh=holding(st.ticker);
+    var cutPct = Number(sc.sellCutPct)||0;
+    var sellAt = buying ? p : Math.max(1, Math.round(p*(100-cutPct)/100));
+    var tr=document.createElement("tr");
+    var c2=esc(st.color||"#000");
+    tr.appendChild(tdHTML("<span class='tick' style='color:"+c2+"'>"+esc(st.ticker)+"</span>"));
+    tr.appendChild(tdHTML("<span style='color:"+c2+";font-weight:bold'>"+esc(st.desc||"")+"</span>"));
+    tr.appendChild(tdHTML(coin("<strong>"+p+"</strong>")+" each","mid gR"));
+    tr.appendChild(tdHTML(hh.n ? ("<strong>"+hh.n+"</strong> shares")
+      : "<span class='muted'>"+(buying?"none":"none held")+"</span>","ctr mid"));
+    tr.appendChild(tdHTML(hh.n ? (coin("<strong>"+Math.round(hh.spent/hh.n)+"</strong>")+" each")
+      : "<span class='muted'>—</span>","mid gR"));
+
+    if(!buying && !hh.n){
+      tr.appendChild(tdHTML("<span class='muted'>—</span>"));
+      tr.style.opacity=".55";
+      t.appendChild(tr); return;
+    }
+    any=true;
+    var cell=el("td","mid");
+    var maxFn = buying ? function(){ return p>0?Math.floor(goldHeld()/p):0; }
+                       : function(){ return hh.n; };
+    cell.appendChild(qtyRow(maxFn, "All",
+      (buying?"Buy for ":"Sell for ")+coin(buying?p:sellAt),
+      function(n){
+        G.shares = G.shares || {};
+        if(buying){
+          if(n*p > goldHeld()){ convMsg="You can't afford that many."; draw(); return; }
+          addGold(-n*p);
+          G.shares[st.ticker] = {n:hh.n+n, spent:hh.spent + n*p};
+        } else {
+          if(n>hh.n){ convMsg="You don't hold that many."; draw(); return; }
+          addGold(n*sellAt);
+          var left=hh.n-n;
+          if(left<=0) delete G.shares[st.ticker];
+          else G.shares[st.ticker] = {n:left, spent: Math.round(hh.spent*left/hh.n)};
+        }
+        marketView=null; draw();
+      }));
+    tr.appendChild(cell);
+    t.appendChild(tr);
+  });
+  box.appendChild(t);
+  if(!stockDefs().length) box.appendChild(el("p","muted","No stocks have been set up yet."));
+  else if(!buying && !any) box.appendChild(el("p","muted","You don't hold any shares yet."));
+  else box.appendChild(el("p","muted", buying
+    ? "\"You spent\" is the average you've paid so far. \"All\" is as many as you can afford."
+    : "\"You spent\" is the average you've paid — compare it with today's price."));
+  return box;
+}
+
+function resetSubViews(){ counterView=null; marketView=null; showDetails=false; }
 function pressButton(screenId,b){
   applyFx(b);
   if(b.message) convMsg=b.message;
-  if(b.leads && SCREENS[b.leads]) path.push(b.leads);
+  if(b.leads && SCREENS[b.leads]){ path.push(b.leads); resetSubViews(); }
   draw();
 }
-function goBack(){ path.pop(); draw(); }
+function goBack(){ path.pop(); resetSubViews(); draw(); }
 function advance(spend){
   if(spend){
     if(apVal() < (CFG.apSkip||5)){ convMsg="Not enough ✨ — do some practice!"; draw(); return; }
     S.ap = apVal() - (CFG.apSkip||5); gstore.saveStudentAP();
   }
   if(G.day >= CFG.days){ endRun(); return; }
-  G.day++; path=[]; draw();
+  G.day++; path=[]; resetSubViews(); applyInterest(1); draw();
+}
+/* Interest lands when the day rolls over, whether they waited or paid ✨ to skip. */
+function applyInterest(days){
+  G.bank = G.bank || {};
+  Object.keys(SCREENS).forEach(function(id){
+    var sc=SCREENS[id];
+    if(!sc || sc.type!==3 || sc.counterMode==="store") return;
+    var pct=Number(sc.interest)||0;
+    if(!pct) return;
+    var bal=G.bank[id]||0;
+    if(!bal) return;
+    for(var i=0;i<days;i++) bal = bal + bal*pct/100;
+    var cap=Number(sc.maxBalance)||0;
+    bal=Math.floor(bal);
+    if(cap) bal=Math.min(cap,bal);
+    G.bank[id]=bal;
+  });
 }
 function endRun(){
   G.over=true;
@@ -294,7 +874,47 @@ function askRestart(){
 }
 function doRestart(){
   var keep={stats:G.stats, inv:G.inv, found:G.found, name:G.name, pic:G.pic, bg:G.bg};
-  G=freshGame(keep); path=[]; showMe=false; showEndings=false; hideModal(); draw();
+  G=freshGame(keep);
+  PRICE_CACHE={};
+  path=[]; showMe=false; showEndings=false; resetSubViews();
+  chartTicker=null; chartAll=false;
+  hideModal(); draw();
+}
+
+/* ---------- stat pages ---------- */
+function statPages(){
+  var defs = (CFG.statPages||[]).slice();
+  var byName = {};
+  defs.forEach(function(nm){ byName[nm]={name:nm, stats:[]}; });
+  var loose=[];
+  (CFG.stats||[]).forEach(function(st){
+    if(st.name==="__AP__") return;
+    var pg = st.page;
+    if(pg && byName[pg]) byName[pg].stats.push(st);
+    else loose.push(st);
+  });
+  var out = defs.map(function(nm){ return byName[nm]; })
+                .filter(function(p){ return p.stats.length; });
+  if(loose.length){
+    /* stats not assigned anywhere land on the first page, or their own */
+    if(out.length) out[0].stats = out[0].stats.concat(loose);
+    else out.push({name: defs[0] || "Stats", stats: loose});
+  }
+  if(!out.length) out=[{name:"Stats", stats:[]}];
+  return out;
+}
+
+/* ---------- titles ---------- */
+function titleLines(){
+  var out=[];
+  (CFG.titles||[]).forEach(function(line){
+    var best=null;
+    (line.levels||[]).forEach(function(lv){
+      if((lv.conds||[]).every(condOK)) best=lv;   // last matching wins → order easiest first
+    });
+    if(best) out.push(best.label);
+  });
+  return out;
 }
 
 /* ---------- Me panel ---------- */
@@ -311,20 +931,52 @@ function drawMe(){
 
   var split=el("div"); split.style.cssText="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-top:10px;";
   var left=el("div");
-  left.appendChild(el("p",null,"Stats")).style.cssText="font-weight:bold;margin:0 0 5px;";
+
+  /* Stat pages: named and ordered by you, and each stat says which one it's on.
+     A page with nothing on it is skipped. */
+  var pages = statPages();
+  var gi = Math.min(G._statPage||0, pages.length-1);
+  if(gi<0) gi=0;
+  var page = pages[gi] || {name:"Stats", stats:[]};
+
+  var gt=el("p",null,page.name); gt.style.cssText="font-weight:bold;margin:0 0 5px;";
+  left.appendChild(gt);
+
   var t=el("table");
-  var apr=document.createElement("tr");
-  apr.appendChild(el("td",null,"✨ Action points")).style.width="56%";
-  apr.appendChild(el("td")).innerHTML="<strong>"+apVal()+"</strong>";
-  t.appendChild(apr);
-  (CFG.stats||[]).forEach(function(s){
-    if(s.name==="__AP__") return;
+  if(gi===0){
+    var apr=document.createElement("tr");
+    apr.appendChild(el("td",null,"✨ Action points")).style.width="56%";
+    apr.appendChild(el("td")).innerHTML="<strong>"+apVal()+"</strong>";
+    t.appendChild(apr);
+  }
+  page.stats.forEach(function(s){
     var tr=document.createElement("tr");
     tr.appendChild(el("td",null,(s.emoji?s.emoji+" ":"")+s.name));
     var td=el("td"); td.innerHTML="<strong>"+statVal(s.name)+"</strong>"; tr.appendChild(td);
     t.appendChild(tr);
   });
-  left.appendChild(t); split.appendChild(left);
+  left.appendChild(t);
+
+  /* Titles belong to the character, so they show on every page. */
+  var tl=titleLines();
+  if(tl.length){
+    var tb=el("div","titlebox");
+    tb.appendChild(el("div","lab","Titles"));
+    tl.forEach(function(x){ tb.appendChild(el("div","t",x)); });
+    left.appendChild(tb);
+  }
+
+  /* Arrows below the titles box, matching the inventory pager. */
+  if(pages.length>1){
+    var pgs=el("div","pager");
+    pgs.appendChild(mkBtn("◀","",function(){
+      G._statPage=(gi-1+pages.length)%pages.length; draw(); }));
+    pgs.appendChild(el("span","muted",(gi+1)+" / "+pages.length));
+    pgs.appendChild(mkBtn("▶","",function(){
+      G._statPage=(gi+1)%pages.length; draw(); }));
+    left.appendChild(pgs);
+  }
+  split.appendChild(left);
 
   var right=el("div");
   right.appendChild(el("p",null,"Inventory")).style.cssText="font-weight:bold;margin:0 0 5px;";
@@ -427,9 +1079,11 @@ function drawConvert(){
       if(!c) return ibNode("locked","","???","",null);
       return ibNode("", c.pic, c.label, "", function(){ convCat=i; draw(); });
     }
+    /* No Back here — Close ▴ is the way out. */
+    var mid0=el("div"); mid0.className="mid";
+    mid0.appendChild(ibNode("big here", cfg.pic, cfg.label||"Convert ✨ to…","",null));
     grid.appendChild(catSlot(0));
-    grid.appendChild(ibNode("big mid back", cfg.pic, cfg.label||"Convert ✨ to…","",
-      function(){ showConvert=false; draw(); }));
+    grid.appendChild(mid0);
     grid.appendChild(catSlot(1)); grid.appendChild(catSlot(2)); grid.appendChild(catSlot(3));
   } else {
     var c=(cfg.cats||[])[convCat]||{options:[]};
@@ -439,8 +1093,13 @@ function drawConvert(){
       if(!o) return ibNode("locked","","???","",null);
       return ibNode("", o.pic||c.pic, o.label, "", function(){ doConvert(o); });
     }
+    var mid1=el("div"); mid1.className="mid";
+    mid1.appendChild(ibNode("big here", c.pic, c.label||"", "", null));
+    var cb=mkBtn("← Back","backbtn"); cb.className="backbtn";
+    cb.onclick=function(){ convCat=null; draw(); };
+    mid1.appendChild(cb);
     grid.appendChild(optSlot(0));
-    grid.appendChild(ibNode("big mid back", c.pic, "← Back","", function(){ convCat=null; draw(); }));
+    grid.appendChild(mid1);
     grid.appendChild(optSlot(1)); grid.appendChild(optSlot(2)); grid.appendChild(optSlot(3));
   }
   card.appendChild(grid);
@@ -521,8 +1180,11 @@ function drawCollection(){
     return ibNode("", (list[0]||{}).pic, cat, n+" of "+list.length+" found", function(){
       showEndingCat(cat); });
   }
+  /* No Back on the collection page — Close ▴ is the way out. */
+  var midE=el("div"); midE.className="mid";
+  midE.appendChild(ibNode("big here", G.pic, "Endings","", null));
   grid.appendChild(catSlot(0));
-  grid.appendChild(ibNode("big mid back", G.pic, "Endings","", function(){ showEndings=false; draw(); }));
+  grid.appendChild(midE);
   grid.appendChild(catSlot(1)); grid.appendChild(catSlot(2)); grid.appendChild(catSlot(3));
   card.appendChild(grid);
   if(card._sub) card.appendChild(card._sub);
